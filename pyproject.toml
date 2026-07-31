@@ -175,7 +175,7 @@ dev = [
     "commitizen>=4.16.5",             # Um utilitário para manter o histórico de commits consistente
     # Documentação
     "mkdocs-material>=9.7.7",         # Um tema para MkDocs
-    "mkdocstrings[python]>=0.25",   # Um plugin para MkDocs que gera documentação a partir de docstrings
+    "mkdocstrings[python]>=1.0.6",   # Um plugin para MkDocs que gera documentação a partir de docstrings
     # Profiling (use sob demanda)
     "scalene>=1.5",                 # Um profiler de performance para Python
     # Ferramentas para rodar Data Wrangler no Vscode
