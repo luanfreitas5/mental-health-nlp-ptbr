@@ -51,7 +51,9 @@ o histórico de publicações e sua evolução temporal.
 
 ## 🏗️ Arquitetura
 
-```mermaid
+<!--
+Fonte Mermaid deste diagrama (mantido para referência e para regenerar a imagem):
+
 flowchart TD
     A["1 - Coleta<br/>twscrape e barreira ética"] --> B["2 - Pré-processamento<br/>limpeza e remoção de PII"]
     B --> C["3 - Rotulação<br/>sentimento e supervisão fraca"]
@@ -64,7 +66,15 @@ flowchart TD
     G --> H["8 - Treinamento<br/>validação cruzada"]
     H --> I["9 - Avaliação<br/>testes estatísticos e ablação"]
     I --> J["10 - Relatórios<br/>figuras e model card"]
-```
+
+Para regenerar após editar: mmdc -i architecture.mmd -o docs/assets/architecture.svg -b transparent
+O renderizador Mermaid nativo do GitHub (viewscreen.githubusercontent.com) falha para
+este diagrama com "Cannot read properties of undefined (reading 'render')" mesmo com
+sintaxe válida (confirmado renderizando localmente com mermaid-cli); por isso o diagrama
+é servido como imagem estática.
+-->
+
+![Arquitetura do pipeline: dez etapas, da coleta aos relatórios finais](docs/assets/architecture.svg)
 
 ### Modelo híbrido proposto
 
