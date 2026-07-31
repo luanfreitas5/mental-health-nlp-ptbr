@@ -53,17 +53,17 @@ o histórico de publicações e sua evolução temporal.
 
 ```mermaid
 flowchart TD
-    A["1 · Coleta<br/>twscrape + barreira ética"] --> B["2 · Pré-processamento<br/>limpeza + remoção de PII"]
-    B --> C["3 · Rotulação<br/>sentimento + supervisão fraca"]
-    B --> D["4 · Vetor psicológico<br/>LLM local (Ollama)"]
-    B --> E["5 · Embeddings<br/>BERTimbau"]
-    C --> F["6 · Atributos<br/>6 grupos por usuário"]
+    A["1 - Coleta<br/>twscrape e barreira ética"] --> B["2 - Pré-processamento<br/>limpeza e remoção de PII"]
+    B --> C["3 - Rotulação<br/>sentimento e supervisão fraca"]
+    B --> D["4 - Vetor psicológico<br/>LLM local, Ollama"]
+    B --> E["5 - Embeddings<br/>BERTimbau"]
+    C --> F["6 - Atributos<br/>6 grupos por usuário"]
     D --> F
     E --> F
-    F --> G["7 · Particionamento<br/>agrupado por usuário"]
-    G --> H["8 · Treinamento<br/>validação cruzada"]
-    H --> I["9 · Avaliação<br/>testes estatísticos + ablação"]
-    I --> J["10 · Relatórios<br/>figuras + model card"]
+    F --> G["7 - Particionamento<br/>agrupado por usuário"]
+    G --> H["8 - Treinamento<br/>validação cruzada"]
+    H --> I["9 - Avaliação<br/>testes estatísticos e ablação"]
+    I --> J["10 - Relatórios<br/>figuras e model card"]
 ```
 
 ### Modelo híbrido proposto
