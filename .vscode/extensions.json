@@ -1,0 +1,25 @@
+{
+  // Extensões recomendadas — o VSCode as sugere ao abrir o projeto.
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "charliermarsh.ruff",
+    "detachhead.basedpyright",
+    "ms-toolsai.jupyter",
+    "tamasfe.even-better-toml",
+    "redhat.vscode-yaml",
+    "yzhang.markdown-all-in-one",
+    "bierner.markdown-mermaid",
+    "streetsidesoftware.code-spell-checker",
+    "streetsidesoftware.code-spell-checker-portuguese-brazilian",
+    "ms-azuretools.vscode-docker",
+    "eamodio.gitlens"
+  ],
+  "unwantedRecommendations": [
+    // O ruff substitui black, isort e flake8 (ver pyproject.toml).
+    "ms-python.black-formatter",
+    "ms-python.isort",
+    "ms-python.flake8"
+  ]
+}

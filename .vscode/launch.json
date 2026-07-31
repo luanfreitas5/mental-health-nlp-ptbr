@@ -1,0 +1,135 @@
+{
+  // ==========================================================================
+  // Configurações de depuração.
+  //
+  // `PYTHONPATH` aponta para `src/`, que é a raiz de importação do projeto.
+  // `PYTHONHASHSEED` é definido aqui porque só tem efeito se estiver presente
+  // antes do interpretador iniciar.
+  // ==========================================================================
+  "version": "0.2.0",
+
+  "inputs": [
+    {
+      "id": "stage",
+      "type": "pickString",
+      "description": "Etapa do pipeline a executar",
+      "options": [
+        "all",
+        "collect",
+        "preprocess",
+        "label",
+        "psych",
+        "embed",
+        "features",
+        "split",
+        "train",
+        "evaluate",
+        "report"
+      ],
+      "default": "preprocess"
+    }
+  ],
+
+  "configurations": [
+    {
+      "name": "Pipeline: escolher etapa",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--stage", "${input:stage}", "--log-level", "DEBUG"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "PYTHONHASHSEED": "42"
+      }
+    },
+    {
+      "name": "Pipeline: completo",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--stage", "all"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "PYTHONHASHSEED": "42"
+      }
+    },
+    {
+      "name": "Pipeline: status dos artefatos",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--status"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "PYTHONHASHSEED": "42"
+      }
+    },
+    {
+      "name": "Pipeline: treino rápido (sem CV)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--stage", "train", "--models", "dummy", "xgboost", "--skip-cv"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "PYTHONHASHSEED": "42"
+      }
+    },
+    {
+      "name": "Coleta: dry-run (sem requisições)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--stage", "collect", "--dry-run"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "PYTHONHASHSEED": "42"
+      }
+    },
+    {
+      "name": "Testes: arquivo atual",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v", "--no-cov"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" }
+    },
+    {
+      "name": "Testes: suíte completa",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests", "-v"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" }
+    },
+    {
+      "name": "Dashboard Streamlit",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": ["run", "${workspaceFolder}/app/dashboard.py"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" }
+    }
+  ]
+}

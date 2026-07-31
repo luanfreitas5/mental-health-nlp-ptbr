@@ -1,0 +1,85 @@
+{
+  // ==========================================================================
+  // Configuração compartilhada do VSCode.
+  // Versionada de propósito: garante que todos vejam os mesmos erros de lint e
+  // o mesmo resultado de formatação, em vez de brigas de estilo no diff.
+  // ==========================================================================
+
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+
+  // `src/` é a raiz de importação do projeto: sem isto, o editor não resolve
+  // `from config.settings import ...`.
+  "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+  "python.analysis.typeCheckingMode": "standard",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticMode": "workspace",
+
+  // --- Testes ---------------------------------------------------------------
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+
+  // --- Formatação e lint ----------------------------------------------------
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    },
+    "editor.rulers": [100]
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml",
+    "editor.tabSize": 2
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.rulers": [88]
+  },
+
+  // --- Editor ---------------------------------------------------------------
+  "editor.formatOnSave": true,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  // LF em todos os arquivos: CRLF quebra hooks que reescrevem para LF e gera
+  // falhas de CI do tipo "files were modified by this hook".
+  "files.eol": "\n",
+
+  // --- Ruídos ---------------------------------------------------------------
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.hypothesis": true,
+    "**/*.egg-info": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/data/**": true,
+    "**/mlruns/**": true,
+    "**/models/**": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/data": true,
+    "**/mlruns": true,
+    "**/htmlcov": true,
+    "uv.lock": true
+  },
+
+  // --- Notebooks ------------------------------------------------------------
+  "notebook.formatOnSave.enabled": true,
+  "notebook.diff.ignoreMetadata": true,
+  "notebook.diff.ignoreOutputs": true,
+
+  // --- Idioma ---------------------------------------------------------------
+  // A documentação do projeto é em pt-BR; os identificadores, em inglês.
+  "cSpell.language": "en,pt,pt-BR",
+  "basedpyright.disableLanguageServices": true
+}
