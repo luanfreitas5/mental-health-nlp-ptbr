@@ -72,7 +72,7 @@ jobs:
         run: awk '/^## /{n++} n==1' CHANGELOG.md | tail -n +2 > release-notes.md
 
       - name: Criar GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "v${{ steps.cz.outputs.version }}"
           body_path: release-notes.md
