@@ -35,7 +35,7 @@ def _format_number(value: Any, precision: int = 4) -> str:
     """Formata um número no padrão pt-BR, tolerando ``None``."""
     if value is None:
         return "—"
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int | float)):
         return f"{value:.{precision}f}".replace(".", ",")
     return str(value)
 

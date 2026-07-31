@@ -164,7 +164,7 @@ class ExperimentTracker:
         assert self._mlflow is not None  # garantido por `self.enabled` acima
         try:
             numeric = {
-                key: value for key, value in metrics.items() if isinstance(value, (int, float))
+                key: value for key, value in metrics.items() if isinstance(value, (int | float))
             }
             self._mlflow.log_metrics(numeric, step=step)
         except Exception as error:

@@ -381,6 +381,6 @@ def summarize(metrics: dict[str, Any]) -> str:
     parts = [
         f"{name}={value:.4f}".replace(".", ",")
         for name, value in metrics.items()
-        if isinstance(value, (int, float))
+        if isinstance(value, int | float)
     ]
     return " | ".join(parts)

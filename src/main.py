@@ -311,7 +311,7 @@ def _serialize(results: dict[str, Any]) -> dict[str, Any]:
         serializable[stage] = {
             key: value
             for key, value in payload.items()
-            if value is None or isinstance(value, (str, int, float, bool, list, dict))
+            if value is None or isinstance(value, (str | int | float | bool | list | tuple | dict))
         }
     return serializable
 
