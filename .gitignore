@@ -1,0 +1,105 @@
+# =============================================================================
+# .gitignore — projetos de ciência de dados (alinhado ao CLAUDE.md).
+# Regra geral: dados e modelos são versionados por DVC/MLflow, não pelo Git.
+# COMMITADOS de propósito: uv.lock, .env.example, .secrets.baseline,
+# .vscode/settings.json, .vscode/launch.json, arquivos .dvc e .gitkeep.
+# =============================================================================
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Ambientes / uv --------------------------------------------------------
+.venv/
+venv/
+env/
+# uv.lock DEVE ser commitado (reprodutibilidade) — não ignorar.
+
+# --- Segredos / variáveis de ambiente --------------------------------------
+.env
+.env.*
+!.env.example
+# .secrets.baseline é commitado (usado pelo detect-secrets) — não ignorar.
+
+# --- Dados (versionados por DVC) -------------------------------------------
+data/raw/*
+data/external/*
+data/interim/*
+data/processed/*
+# Mantém a estrutura de pastas e os ponteiros do DVC:
+!data/**/.gitkeep
+!data/**/*.dvc
+
+# --- Modelos / experimentos ------------------------------------------------
+models/*
+!models/**/.gitkeep
+!models/**/*.dvc
+mlruns/
+mlartifacts/
+*.joblib
+*.pkl
+*.pt
+*.onnx
+*.h5
+
+# --- DVC -------------------------------------------------------------------
+/.dvc/cache
+/.dvc/tmp
+/.dvc/plots
+# .dvc/config e os arquivos *.dvc são commitados.
+
+# --- Logs ------------------------------------------------------------------
+logs/
+*.log
+
+# --- Testes / cobertura / lint ---------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+
+# --- Documentação (build do MkDocs) ----------------------------------------
+site/
+
+# --- Notebooks -------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- Profiling -------------------------------------------------------------
+*.speedscope
+*.memray
+profile.html
+profile.json
+
+# --- Sistema operacional ---------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# --- IDEs ------------------------------------------------------------------
+.idea/
+# Do VSCode, mantém apenas os arquivos de configuração compartilhados:
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# --- Arquivos do Claude ----------------------------------------------------
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
+
+# --- Opcional: descomente para ignorar dados soltos por extensão -----------
+# *.csv
+# *.parquet
+# *.xlsx
+# *.feather

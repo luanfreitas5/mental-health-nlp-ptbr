@@ -1,0 +1,49 @@
+# =============================================================================
+# .gitattributes — normaliza fins de linha para LF no repositório.
+#
+# Motivação: em máquinas Windows, arquivos salvos com CRLF quebram hooks que
+# reescrevem para LF (ex.: nbstripout em notebooks) e geram falhas de CI do
+# tipo "files were modified by this hook". Forçar LF garante que o conteúdo
+# gravado no git seja idêntico em qualquer sistema operacional.
+# =============================================================================
+
+# Padrão: o git detecta arquivos de texto e normaliza para LF no commit.
+* text=auto eol=lf
+
+# --- Código e configuração (sempre LF) --------------------------------------
+*.py        text eol=lf
+*.ipynb     text eol=lf
+*.toml      text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.sh        text eol=lf
+*.cmd       text eol=lf
+*.dockerfile text eol=lf
+Dockerfile  text eol=lf
+Makefile    text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+.env.example text eol=lf
+
+# --- Baseline do detect-secrets (JSON UTF-8, LF) ----------------------------
+.secrets.baseline text eol=lf
+
+# --- Arquivos binários (nunca normalizar) -----------------------------------
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.svg       text eol=lf
+*.pdf       binary
+*.parquet   binary
+*.pkl       binary
+*.joblib    binary
+*.onnx      binary
+*.model     binary
+*.bin       binary
+*.gz        binary
+*.zip       binary

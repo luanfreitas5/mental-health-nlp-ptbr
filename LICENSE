@@ -1,0 +1,42 @@
+MIT License
+
+Copyright (c) 2026 Luan Freitas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTA SOBRE OS DADOS
+
+Esta licença cobre exclusivamente o CÓDIGO deste repositório.
+
+O conjunto de dados construído com este código NÃO é redistribuído e NÃO está
+coberto por esta licença. Trata-se de dado pessoal sensível de saúde (LGPD,
+art. 5º, II), coletado sob protocolo aprovado por Comitê de Ética em Pesquisa.
+
+Quem utilizar este código para construir uma base equivalente é integralmente
+responsável por obter sua própria aprovação ética e por cumprir a legislação
+de proteção de dados aplicável.
+
+NOTA SOBRE O USO
+
+O software não constitui dispositivo médico nem ferramenta de diagnóstico. Não
+deve ser usado para decisão automatizada sobre pessoas, vigilância, triagem sem
+consentimento, ou em contextos de emprego, seguro e crédito. Ver o Model Card em
+reports/model_cards/ para os usos fora de escopo.
