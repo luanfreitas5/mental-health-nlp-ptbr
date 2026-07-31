@@ -3665,7 +3665,7 @@ dev = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipywidgets", specifier = ">=8.1.8" },
     { name = "mkdocs-material", specifier = ">=9.7.7" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.25" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
     { name = "nbqa", specifier = ">=1.8" },
     { name = "nbstripout", specifier = ">=0.7" },
     { name = "pip", specifier = ">=26.1.2" },
