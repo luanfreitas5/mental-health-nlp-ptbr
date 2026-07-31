@@ -3629,7 +3629,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "ollama", marker = "extra == 'llm'", specifier = ">=0.3" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "pandera", extras = ["polars"], specifier = ">=0.20" },
+    { name = "pandera", extras = ["polars"], specifier = ">=0.32.1" },
     { name = "plotly", marker = "extra == 'app'", specifier = ">=5.24" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pyarrow", specifier = ">=16.0" },

@@ -45,7 +45,7 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",                  # exigido pelo seaborn e pela interop do sklearn
     # Contratos de dados
-    "pandera[polars]>=0.20",
+    "pandera[polars]>=0.32.1",
     # Configuração e validação em runtime
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
