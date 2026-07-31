@@ -7,9 +7,23 @@ versionamento segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 As entradas são geradas pelo `commitizen` a partir dos Conventional Commits
 (`cz bump --changelog`).
 
-## [Não publicado]
+## v0.2.0 (2026-07-31)
 
-## [0.1.0] - 2026-07-30
+### Feat
+
+- **project**: Implementar um pipeline de detecção de saúde mental por meio de PNL (Processamento de Linguagem Natural)
+- **dashboard**: Adicionar aplicativo de inspeção de resultados do Streamlit
+- **config**: Adiciona uma estrutura de configuração abrangente e modelos de coleta de dados.
+
+### Fix
+
+- **types**: converter tipos de retorno da biblioteca
+
+### Refactor
+
+- usar a sintaxe de união PEP 604 para verificação de tipos
+
+## 0.1.0 (2026-07-30)
 
 ### Adicionado
 
@@ -65,3 +79,19 @@ workflows de CI/CD, documentação MkDocs Material e dashboard Streamlit.
 
 [Não publicado]: https://github.com/luanfreitas5/mental-health-nlp-ptbr/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/luanfreitas5/mental-health-nlp-ptbr/releases/tag/v0.1.0
+
+## v0.2.0 (2026-07-31)
+
+### Feat
+
+- **project**: Implementar um pipeline de detecção de saúde mental por meio de PNL (Processamento de Linguagem Natural)
+- **dashboard**: Adicionar aplicativo de inspeção de resultados do Streamlit
+- **config**: Adiciona uma estrutura de configuração abrangente e modelos de coleta de dados.
+
+### Fix
+
+- **types**: converter tipos de retorno da biblioteca
+
+### Refactor
+
+- usar a sintaxe de união PEP 604 para verificação de tipos
