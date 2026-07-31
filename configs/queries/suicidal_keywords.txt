@@ -1,0 +1,17 @@
+# Palavras-chave de ideação suicida para a busca semente (twscrape).
+#
+# ATENÇÃO: termos desta lista delimitam uma população em risco. A coleta só
+# ocorre após aprovação do CEP/CONEP e os dados seguem o protocolo descrito em
+# docs/guides/ethics.md. Um termo por linha; '# ' inicia comentário.
+quero morrer
+não quero viver
+não quero mais viver
+pensando em suicídio
+acabar com minha vida
+tirar minha vida
+sumir para sempre
+queria não ter nascido
+melhor sem mim
+não vejo saída
+desistir de tudo
+me matar

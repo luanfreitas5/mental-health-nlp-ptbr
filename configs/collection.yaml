@@ -1,0 +1,81 @@
+# =============================================================================
+# collection.yaml — estratégia de coleta longitudinal (twscrape / X-Twitter).
+#
+# Fluxo (ver Proposta, "Estratégia de Coleta de Usuários"):
+#   1. busca semente por palavras-chave/hashtags  -> data/raw/seed_tweets/
+#   2. extração dos autores                        -> usuários candidatos
+#   3. coleta retrospectiva do histórico           -> data/raw/user_histories/
+#   4. perfil temporal do usuário
+#   5. rotulação NO NÍVEL DO USUÁRIO
+#
+# A coleta NÃO é executada automaticamente pelo pipeline completo: exige
+# aprovação do CEP/CONEP e contas configuradas no twscrape (ver .env.example).
+# =============================================================================
+
+# --- Busca semente ----------------------------------------------------------
+seed_search:
+  language: pt
+  since: "2024-01-01"          # janela de coleta (inclusiva)
+  until: "2025-12-31"
+  limit_per_query: 500         # tweets por termo/hashtag
+  exclude_retweets: true
+  exclude_replies: false
+  # Grupos de consulta -> arquivos .txt (um termo por linha, '#' inicia comentário)
+  groups:
+    depressao:
+      keyword_file: depression_keywords.txt
+      hashtag_file: depression_hashtags.txt
+      candidate_label: depressao
+    ideacao_suicida:
+      keyword_file: suicidal_keywords.txt
+      hashtag_file: suicidal_hashtags.txt
+      candidate_label: ideacao_suicida
+    controle:
+      keyword_file: null
+      hashtag_file: control_hashtags.txt
+      candidate_label: controle
+
+# --- Coleta retrospectiva do histórico --------------------------------------
+user_history:
+  window_days: 365             # profundidade retrospectiva a partir de `until`
+  max_tweets_per_user: 1000
+  min_tweets_per_user: 30      # abaixo disso o perfil temporal é ruidoso demais
+  min_active_days: 15          # dias distintos com ao menos 1 tweet
+  exclude_retweets: true
+  exclude_replies: false
+  collect_user_metadata: true  # seguidores, seguindo, data de criação da conta
+
+# --- Amostragem e balanceamento ---------------------------------------------
+sampling:
+  # Critério de viabilidade estatística (Proposta, "Tamanho Amostral Mínimo").
+  # Validar na fase de coleta com análise de poder para o F1-macro.
+  min_users_per_class: 300
+  max_users_per_class: 1500
+  # Rejeita a construção do dataset se a razão maior/menor classe ultrapassar:
+  max_class_imbalance_ratio: 3.0
+  random_seed: 42
+
+# --- Filtros de qualidade ---------------------------------------------------
+filters:
+  min_chars_per_tweet: 10
+  max_chars_per_tweet: 1000
+  drop_duplicated_text: true
+  # Descarta contas com padrão automatizado (bots, divulgação, notícias).
+  max_tweets_per_day: 80
+  min_account_age_days: 90
+  require_language: pt
+
+# --- Limites de requisição / resiliência ------------------------------------
+rate_limit:
+  requests_per_minute: 30
+  retry_attempts: 3
+  backoff_seconds: 15
+  backoff_multiplier: 2.0
+  # Salva o progresso a cada N usuários — a coleta é longa e deve ser retomável.
+  checkpoint_every_n_users: 25
+
+# --- twscrape ---------------------------------------------------------------
+# O banco de contas contém credenciais e NUNCA vai para o Git (ver .gitignore).
+twscrape:
+  accounts_db: data/external/twscrape_accounts.db
+  raise_when_no_account: true

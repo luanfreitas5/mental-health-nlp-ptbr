@@ -1,0 +1,23 @@
+# Léxico — expressões relacionadas à morte e ao suicídio.
+# Usado em: features linguísticas (death_ratio) e supervisão fraca.
+# Um termo/expressão por linha, minúsculas, sem pontuação. '#' inicia comentário.
+morte
+morrer
+morri
+morrendo
+suicídio
+suicidio
+suicidar
+me matar
+tirar a vida
+acabar com tudo
+não acordar mais
+sumir para sempre
+descansar em paz
+último dia
+carta de despedida
+overdose
+enforcar
+não estar mais aqui
+queria estar morto
+queria estar morta

@@ -1,0 +1,121 @@
+# =============================================================================
+# features.yaml — extração de atributos e agregação tweet -> usuário.
+#
+# Os `groups` abaixo são a unidade do Ablation Study (H2/H3/H4): cada grupo
+# pode ser ligado/desligado individualmente, e `evaluation.yaml` remove um
+# grupo por vez para medir sua contribuição marginal.
+# =============================================================================
+
+groups:
+  linguistic: true
+  emotional: true
+  semantic: true
+  temporal: true
+  behavioral: true
+  psychological: true
+
+# --- 1. Linguísticos --------------------------------------------------------
+linguistic:
+  lexicon_ratios:                # proporção de tweets do usuário com ≥1 termo
+    - death
+    - loneliness
+    - hopelessness
+    - isolation
+    - negative_emotion
+    - insomnia
+  text_length: true              # comprimento médio/desvio dos textos
+  lexical_diversity: true        # type-token ratio + MTLD
+  pronouns: true                 # 1ª, 2ª e 3ª pessoa (singular e plural)
+  ngrams:
+    enabled: true
+    vectorizer: tfidf
+    ngram_range: [1, 2]
+    max_features: 3000
+    min_df: 5
+    max_df: 0.85
+    sublinear_tf: true
+
+# --- 2. Emocionais ----------------------------------------------------------
+emotional:
+  sentiment_distribution: true   # proporção de positivo/negativo/neutro
+  sentiment_confidence: true     # média e desvio do score de confiança
+  emotion_intensity: true        # média das emoções finas do encoder
+  aggregations: [mean, std, max, p90]
+
+# --- 3. Semânticos (embeddings) ---------------------------------------------
+semantic:
+  enabled: true
+  # Modelo principal da comparação; os demais entram como extensão exploratória.
+  primary_model: neuralmind/bert-base-portuguese-cased
+  models:
+    bertimbau: neuralmind/bert-base-portuguese-cased
+    roberta: pucpr/biobertpt-all
+    gemma: embeddinggemma
+    llama: llama3.2
+  pooling: mean                  # mean | cls
+  max_length: 128
+  batch_size: 32
+  device: auto
+  normalize: true                # L2 — necessário para similaridade de cossenos
+  # Agregação tweet -> usuário: a média captura o "centro semântico" do perfil;
+  # o desvio captura a dispersão temática (perfis depressivos tendem a ser mais
+  # concentrados). Ambos entram no modelo híbrido.
+  user_aggregations: [mean, std]
+  # Redução opcional antes do XGBoost — 768*2 dims com poucas centenas de
+  # usuários causaria overfitting severo. O PCA é ajustado SÓ no treino.
+  reduction:
+    method: pca                  # pca | none
+    n_components: 64
+    random_state: 42
+
+# --- 4. Temporais -----------------------------------------------------------
+temporal:
+  volume: true                   # tweets por dia / por semana
+  night_activity: true           # atividade na madrugada
+  insomnia_window: [0, 5]        # hora local (00h–05h)
+  circadian_entropy: true        # dispersão da atividade nas 24h
+  sentiment_trend: true          # inclinação da regressão do sentimento no tempo
+  recent_window_days: 30         # variação emocional dos últimos 30 dias
+  polarity_shift: true           # mudança de polaridade mês a mês
+  negative_persistence: true     # maior sequência de dias com sentimento negativo
+  risk_intensification: true     # inclinação da densidade de termos de risco
+  min_days_for_trend: 14         # abaixo disso a tendência vira NaN (não 0)
+
+# --- 5. Comportamentais -----------------------------------------------------
+behavioral:
+  engagement: true               # curtidas, respostas, repostagens recebidas
+  audience: true                 # seguidores, seguindo
+  follower_following_ratio: true
+  reply_ratio: true              # fração do histórico que são respostas
+  log_transform: true            # métricas de engajamento têm cauda longa
+  aggregations: [mean, median, sum, max]
+
+# --- 6. Psicológicos extraídos por LLM (ver llm.yaml) -----------------------
+psychological:
+  enabled: true
+  dimensions:                    # vetor psicológico, cada dimensão em [0, 1]
+    - tristeza
+    - isolamento
+    - esperanca
+    - ansiedade
+    - risco_suicida
+  # O LLM analisa lotes de tweets do usuário (mais barato e mais contextual
+  # que tweet a tweet, que perde a evolução temporal).
+  granularity: batch             # batch | tweet
+  batch_size_tweets: 20
+  aggregations: [mean, max, std, p90]
+
+# --- Agregação tweet -> usuário ---------------------------------------------
+aggregation:
+  min_tweets_per_user: 30
+  # Sinaliza (em vez de imputar silenciosamente) features indisponíveis por
+  # histórico curto: o modelo aprende que a ausência também é informação.
+  add_missing_indicators: true
+  missing_strategy: median       # median | zero | keep_nan
+
+# --- Escalonamento ----------------------------------------------------------
+scaling:
+  method: standard               # standard | robust | none
+  # Ajustado apenas no split de treino, dentro do Pipeline do scikit-learn,
+  # para evitar vazamento de estatísticas do teste.
+  fit_on_train_only: true

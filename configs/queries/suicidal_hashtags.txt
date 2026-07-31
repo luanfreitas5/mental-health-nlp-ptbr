@@ -1,0 +1,9 @@
+# Hashtags de ideação suicida para a busca semente (twscrape).
+# Um termo por linha; '# ' (com espaço) inicia comentário.
+#suicidio
+#suicídio
+#suicide
+#iwanttodie
+#suicidal
+#setembroamarelo
+#valeapenaviver

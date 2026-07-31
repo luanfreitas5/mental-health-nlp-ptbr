@@ -1,0 +1,44 @@
+# Léxico — emoções negativas gerais (tristeza, raiva, medo, culpa, vergonha).
+# Complementa o encoder de emoções: o léxico é interpretável e barato, o
+# encoder é mais preciso — as duas fontes entram como features distintas.
+# Um termo/expressão por linha, minúsculas. '#' inicia comentário.
+triste
+tristeza
+chorando
+choro
+angústia
+angustia
+angustiado
+ansioso
+ansiosa
+ansiedade
+medo
+pânico
+panico
+raiva
+ódio
+odio
+culpa
+culpado
+culpada
+vergonha
+fracasso
+fracassado
+inútil
+inutil
+péssimo
+pessimo
+horrível
+horrivel
+sofrendo
+sofrimento
+dor
+vazio
+desanimado
+desanimada
+exausto
+exausta
+cansaço
+cansado
+frustrado
+frustrada

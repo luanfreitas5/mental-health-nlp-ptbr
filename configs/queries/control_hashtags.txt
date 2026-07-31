@@ -1,0 +1,18 @@
+# Hashtags neutras para a classe controle.
+#
+# LIMITAÇÃO CONHECIDA (viés de seleção): postar sobre temas neutros não garante
+# ausência de sinais depressivos. O rótulo "controle" significa "sem sinais
+# DETECTADOS no recorte coletado", nunca "ausência clínica confirmada".
+# Ver reports/datasheets/ e docs/guides/ethics.md.
+#
+# Um termo por linha; '# ' (com espaço) inicia comentário.
+#python
+#datascience
+#futebol
+#viagem
+#filmes
+#tecnologia
+#livros
+#culinaria
+#musica
+#fotografia

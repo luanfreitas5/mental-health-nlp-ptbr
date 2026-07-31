@@ -1,0 +1,126 @@
+# =============================================================================
+# llm.yaml — LLMs open-source via Ollama (execução 100% local).
+#
+# Por que Ollama e não uma API remota: os dados são sensíveis (saúde mental,
+# textos de pessoas identificáveis na origem). Enviá-los a um serviço de
+# terceiros seria transferência internacional de dados pessoais sensíveis sem
+# base legal adequada (LGPD, art. 11 e 33). Todo o processamento fica local.
+#
+# Dois usos distintos, não confundir:
+#   1. `psychological_features` — extração do vetor psicológico (feature).
+#   2. `classifier` — o LLM como classificador da comparação principal.
+# =============================================================================
+
+provider: ollama
+
+ollama:
+  host: http://localhost:11434
+  timeout_seconds: 120
+  keep_alive: 5m
+  # Falha explicitamente se o modelo não estiver baixado, em vez de baixar
+  # vários GB no meio de um pipeline longo sem o usuário perceber.
+  auto_pull: false
+  retry_attempts: 3
+  backoff_seconds: 5
+
+# --- 1. Extração do vetor psicológico ---------------------------------------
+psychological_features:
+  enabled: true
+  model: llama3.2
+  temperature: 0.0               # determinismo: é uma etapa de extração
+  seed: 42
+  top_p: 1.0
+  num_ctx: 8192
+  # Saída estruturada validada por Pydantic; resposta fora do schema é
+  # reprocessada até `max_repairs` e depois descartada (nunca "chuta" valor).
+  response_format: json
+  max_repairs: 2
+  dimensions:
+    - tristeza
+    - isolamento
+    - esperanca
+    - ansiedade
+    - risco_suicida
+  batch_size_tweets: 20
+  max_concurrency: 2
+  cache:
+    enabled: true                # cache por hash do prompt: reexecutar é barato
+    path: data/interim/llm_cache
+
+# --- 2. LLM como classificador ----------------------------------------------
+classifier:
+  enabled: true
+  model: llama3.2
+  mode: few_shot                 # zero_shot | few_shot
+  temperature: 0.0
+  seed: 42
+  num_ctx: 8192
+  max_tweets_per_prompt: 20
+  # Exemplos few-shot são SEMPRE tirados do split de treino — usar exemplos do
+  # teste seria vazamento direto.
+  few_shot:
+    n_examples_per_class: 1
+    source_split: train
+    random_state: 42
+  response_format: json
+
+# --- Prompts ----------------------------------------------------------------
+# Versionados para rastreabilidade: mudança de prompt = mudança de método e
+# invalida a comparação com execuções anteriores.
+prompts:
+  version: "1.0.0"
+  language: pt-BR
+  psychological_system: |
+    Você é um assistente de pesquisa em psicologia computacional. Sua tarefa é
+    estimar, a partir de um conjunto de publicações de um mesmo usuário em rede
+    social, a intensidade de cinco dimensões psicológicas.
+
+    Regras obrigatórias:
+    - Responda APENAS com um objeto JSON válido, sem texto adicional.
+    - Cada dimensão recebe um número entre 0.0 e 1.0.
+    - `esperanca` é uma dimensão positiva: valores altos indicam perspectiva de futuro.
+    - Baseie-se somente no conteúdo apresentado. Não infira diagnóstico clínico.
+    - Se o conteúdo for insuficiente, use 0.5 e não invente evidência.
+
+    Formato exato da resposta:
+    {"tristeza": 0.0, "isolamento": 0.0, "esperanca": 0.0, "ansiedade": 0.0, "risco_suicida": 0.0}
+  psychological_user: |
+    Publicações do usuário (ordem cronológica):
+    {tweets}
+
+    Responda com o JSON das cinco dimensões.
+  classifier_system: |
+    Você é um assistente de pesquisa em saúde mental computacional. Classifique
+    o PERFIL de um usuário de rede social a partir do histórico de publicações.
+
+    Classes possíveis:
+    - "controle": não há sinais persistentes de depressão ou ideação suicida.
+    - "depressao": sinais persistentes de humor deprimido, anedonia, desesperança
+      ou isolamento ao longo do tempo.
+    - "ideacao_suicida": referências persistentes ao desejo de morrer, de acabar
+      com a própria vida ou planejamento suicida.
+
+    Regras obrigatórias:
+    - Considere PERSISTÊNCIA ao longo do histórico, não uma publicação isolada.
+    - Ironia, sarcasmo, letras de música e citações não são evidência de risco.
+    - Em caso de coocorrência, prevaleça "ideacao_suicida" (maior severidade).
+    - Isto é triagem para pesquisa, NÃO é diagnóstico clínico.
+    - Responda APENAS com JSON válido.
+
+    Formato exato da resposta:
+    {"classe": "controle|depressao|ideacao_suicida", "confianca": 0.0, "justificativa": "uma frase"}
+  classifier_user: |
+    Histórico de publicações do usuário (ordem cronológica):
+    {tweets}
+
+    Responda com o JSON da classificação.
+
+# --- Salvaguardas -----------------------------------------------------------
+safeguards:
+  # O texto enviado ao LLM já passou pela remoção de PII (menções, URLs,
+  # e-mails, telefones) na etapa de preprocessing.
+  require_pii_scrubbed_input: true
+  # Trunca prompts muito longos em vez de estourar o contexto silenciosamente.
+  max_prompt_chars: 24000
+  # Registra apenas hash do prompt e metadados no log — nunca o conteúdo.
+  log_prompt_content: false

@@ -1,0 +1,21 @@
+# Léxico — expressões relacionadas à solidão.
+# Um termo/expressão por linha, minúsculas. '#' inicia comentário.
+sozinho
+sozinha
+solidão
+solidao
+abandonado
+abandonada
+ninguém liga
+ninguem liga
+ninguém se importa
+sem amigos
+me sinto só
+me sentindo só
+esquecido
+esquecida
+rejeitado
+rejeitada
+sem ninguém
+invisível
+não tenho com quem falar

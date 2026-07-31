@@ -1,0 +1,103 @@
+# =============================================================================
+# labeling.yaml — rotulação automática em dois níveis.
+#
+#   Nível TWEET  : sentimento (positivo/negativo/neutro) por um encoder
+#                  Transformer fine-tuned para português. NÃO é um LLM
+#                  generativo — é um classificador especializado, usado como
+#                  feature e como triagem, nunca como proxy de risco clínico.
+#   Nível USUÁRIO: rótulo do constructo principal (controle / depressão /
+#                  ideação suicida), por supervisão fraca — combinação de
+#                  origem da coleta, evidência léxica persistente e sinais
+#                  temporais — com consenso e revisão manual de uma amostra.
+# =============================================================================
+
+# --- Sentimento por tweet (encoder Transformer) -----------------------------
+sentiment:
+  enabled: true
+  # Trocar aqui muda todo o pipeline de rotulação, sem alterar código.
+  model_name: cardiffnlp/twitter-xlm-roberta-base-sentiment
+  fallback_model_name: pysentimiento/bertweet-pt-sentiment
+  revision: main
+  batch_size: 32
+  max_length: 128
+  device: auto                   # auto | cpu | cuda
+  # Mapeia os rótulos do modelo para o vocabulário do projeto.
+  label_mapping:
+    negative: negativo
+    neutral: neutro
+    positive: positivo
+    NEG: negativo
+    NEU: neutro
+    POS: positivo
+  # Abaixo deste score o tweet vira `indefinido` e não conta na agregação.
+  min_confidence: 0.50
+  cache_predictions: true
+
+# --- Emoções finas por tweet (opcional, encoder multi-rótulo) ---------------
+emotion:
+  enabled: true
+  model_name: pysentimiento/robertuito-emotion-analysis
+  batch_size: 32
+  max_length: 128
+  # Emoções mapeadas para o vocabulário da Proposta (Seção "Atributos Emocionais").
+  target_emotions:
+    - tristeza
+    - raiva
+    - medo
+    - alegria
+    - nojo
+    - surpresa
+
+# --- Rotulação do usuário (supervisão fraca) --------------------------------
+user_labeling:
+  strategy: weak_supervision     # weak_supervision | manual | hybrid
+
+  # Fontes de rótulo combinadas por voto ponderado.
+  sources:
+    collection_group:            # de qual grupo de busca o usuário veio
+      enabled: true
+      weight: 0.40
+    lexical_evidence:            # densidade de termos de risco no histórico
+      enabled: true
+      weight: 0.35
+    temporal_persistence:        # sinal sustentado, não pico isolado
+      enabled: true
+      weight: 0.25
+
+  # Limiares de evidência léxica (proporção de tweets do usuário com ≥1 termo).
+  lexical_thresholds:
+    depressao:
+      min_negative_ratio: 0.30          # tweets com sentimento negativo
+      min_hopelessness_ratio: 0.03
+      min_loneliness_ratio: 0.03
+    ideacao_suicida:
+      min_death_ratio: 0.02             # termos explícitos de morte/suicídio
+      min_suicidal_keyword_hits: 3      # ocorrências absolutas no histórico
+
+  # Persistência temporal: o sinal precisa aparecer em janelas distintas, para
+  # separar transtorno persistente de evento pontual (luto, término, notícia).
+  temporal_persistence:
+    window_days: 30
+    min_windows_with_signal: 2
+    min_span_days: 60
+
+  # Precedência quando há coocorrência: ideação suicida domina depressão
+  # (maior severidade). A coocorrência é preservada em `user_label_multilabel`.
+  class_precedence:
+    - ideacao_suicida
+    - depressao
+    - controle
+
+  # Consenso e qualidade
+  consensus:
+    min_agreement: 0.60          # abaixo disso o usuário vai para `indefinido`
+    drop_undecided: true
+    # Amostra estratificada exportada para revisão manual (concordância kappa).
+    manual_review_sample_size: 200
+    manual_review_file: data/interim/manual_review_sample.parquet
+    # Rótulos revisados manualmente sempre sobrescrevem a supervisão fraca.
+    manual_labels_file: data/external/manual_labels.csv
+
+  # A classe controle é "sem sinais DETECTADOS no recorte coletado" — nunca
+  # "ausência clínica confirmada". Documentado no datasheet e no model card.
+  control_is_screening_negative_only: true

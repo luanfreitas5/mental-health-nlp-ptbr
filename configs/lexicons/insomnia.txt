@@ -1,0 +1,23 @@
+# Léxico — expressões de insônia e alteração do sono.
+# Complementa a feature temporal `night_activity_ratio`: uma coisa é postar de
+# madrugada, outra é relatar explicitamente não conseguir dormir.
+# Um termo/expressão por linha, minúsculas. '#' inicia comentário.
+não consigo dormir
+nao consigo dormir
+sem dormir
+insônia
+insonia
+acordado até tarde
+acordada até tarde
+não durmo
+virei a noite
+noite em claro
+madrugada acordado
+madrugada acordada
+sono ruim
+pesadelo
+pesadelos
+acordo cansado
+acordo cansada
+dormindo demais
+não saio da cama

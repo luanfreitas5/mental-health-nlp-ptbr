@@ -1,0 +1,21 @@
+# Léxico — expressões de isolamento social e comportamental.
+# Distinto de `loneliness.txt`: solidão é o sentimento, isolamento é a conduta
+# (retraimento, evitação, permanecer em casa, cortar contato).
+# Um termo/expressão por linha, minúsculas. '#' inicia comentário.
+trancado no quarto
+trancada no quarto
+não saio de casa
+não quero ver ninguém
+não quero ver ninguem
+evitando as pessoas
+cancelei os planos
+sem vontade de sair
+me afastei
+me afastando
+cortei contato
+não atendo
+ignorando todo mundo
+fico só no quarto
+isolado
+isolada
+sem sair da cama

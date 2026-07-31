@@ -1,0 +1,52 @@
+# =============================================================================
+# logging.yaml — configuração de logging (console via rich + arquivo diário).
+#
+# Consumido por `config.logging.configure_logging`. O nível pode ser
+# sobrescrito na linha de comando (`--log-level`) sem editar este arquivo.
+#
+# ATENÇÃO (LGPD): nenhum handler deve receber texto bruto de tweet. Ver o
+# filtro `redact_pii` abaixo e `privacy.forbid_text_in_logs` em config.yaml.
+# =============================================================================
+
+level: INFO          # DEBUG | INFO | WARNING | ERROR | CRITICAL
+
+console:
+  enabled: true
+  level: INFO
+  rich_tracebacks: true
+  show_path: true            # exibe name:lineno
+  show_time: true
+  markup: true
+  # Nível de log das bibliotecas de terceiros barulhentas (transformers, urllib3...)
+  quiet_loggers:
+    transformers: WARNING
+    urllib3: WARNING
+    httpx: WARNING
+    matplotlib: WARNING
+    numexpr: WARNING
+    mlflow: WARNING
+    twscrape: INFO
+
+file:
+  enabled: true
+  level: DEBUG
+  directory: logs
+  filename_pattern: "log_%Y-%m-%d.log"
+  # Rotação diária, mantendo 30 dias de histórico.
+  rotation: midnight
+  backup_count: 30
+  encoding: utf-8
+  format: "%(asctime)s \t %(levelname)s \t %(name)s \t %(message)s"
+  datefmt: "%Y-%m-%d %H:%M:%S"
+
+# --- Redação de PII ---------------------------------------------------------
+# Filtro aplicado a TODOS os handlers: substitui menções, URLs, e-mails e
+# telefones antes que a mensagem chegue ao console ou ao arquivo.
+redaction:
+  enabled: true
+  replacement: "[REDIGIDO]"
+  patterns:
+    - mention
+    - url
+    - email
+    - phone

@@ -1,0 +1,225 @@
+# =============================================================================
+# model_params.yaml — hiperparâmetros por modelo.
+#
+# Escopo (Proposta, "Modelos Avaliados"):
+#   comparison  -> comparação principal, escopo garantido da dissertação (H1–H5)
+#   exploratory -> extensão exploratória, roda apenas com `--include-exploratory`
+#
+# `baseline` é obrigatório e roda sempre: sem um benchmark simples não há como
+# afirmar que a complexidade adicional trouxe ganho real.
+# =============================================================================
+
+# --- Baseline (sempre executado) --------------------------------------------
+baseline:
+  dummy:
+    scope: baseline
+    estimator: dummy
+    params:
+      strategy: stratified
+      random_state: 42
+  tfidf_logistic:
+    scope: baseline
+    estimator: logistic_regression
+    feature_groups: [linguistic]     # só TF-IDF + léxico: referência de H1
+    params:
+      C: 1.0
+      max_iter: 2000
+      class_weight: balanced
+      random_state: 42
+
+# --- Machine Learning tradicional -------------------------------------------
+traditional:
+  xgboost:
+    scope: comparison
+    estimator: xgboost
+    params:
+      n_estimators: 600
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 3
+      reg_lambda: 1.0
+      objective: multi:softprob
+      eval_metric: mlogloss
+      tree_method: hist
+      random_state: 42
+      n_jobs: -1
+  logistic_regression:
+    scope: exploratory
+    estimator: logistic_regression
+    params:
+      C: 1.0
+      max_iter: 2000
+      class_weight: balanced
+      random_state: 42
+  random_forest:
+    scope: exploratory
+    estimator: random_forest
+    params:
+      n_estimators: 500
+      max_depth: null
+      min_samples_leaf: 2
+      class_weight: balanced_subsample
+      random_state: 42
+      n_jobs: -1
+  lightgbm:
+    scope: exploratory
+    estimator: lightgbm
+    params:
+      n_estimators: 600
+      num_leaves: 31
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      class_weight: balanced
+      random_state: 42
+      n_jobs: -1
+      verbose: -1
+
+# --- Deep Learning ----------------------------------------------------------
+deep:
+  bilstm:
+    scope: comparison
+    estimator: bilstm
+    params:
+      embedding_dim: 300
+      hidden_dim: 128
+      num_layers: 2
+      bidirectional: true
+      dropout: 0.3
+      max_tweets_per_user: 200      # sequência de tweets do usuário
+      max_length: 64
+      learning_rate: 0.001
+      batch_size: 16
+      epochs: 30
+      patience: 5
+      random_state: 42
+  lstm:
+    scope: exploratory
+    estimator: bilstm
+    params:
+      hidden_dim: 128
+      num_layers: 1
+      bidirectional: false
+      dropout: 0.3
+      learning_rate: 0.001
+      batch_size: 16
+      epochs: 30
+      patience: 5
+      random_state: 42
+  cnn_text:
+    scope: exploratory
+    estimator: cnn_text
+    params:
+      embedding_dim: 300
+      num_filters: 128
+      kernel_sizes: [3, 4, 5]
+      dropout: 0.5
+      learning_rate: 0.001
+      batch_size: 16
+      epochs: 30
+      patience: 5
+      random_state: 42
+
+# --- Transformers -----------------------------------------------------------
+transformer:
+  bertimbau:
+    scope: comparison
+    estimator: transformer
+    params:
+      model_name: neuralmind/bert-base-portuguese-cased
+      max_length: 128
+      # Agrega os tweets do usuário: classifica cada tweet e agrega as
+      # probabilidades (mais estável e mais barato que fine-tune hierárquico).
+      user_aggregation: mean
+      learning_rate: 2.0e-5
+      batch_size: 16
+      epochs: 4
+      warmup_ratio: 0.1
+      weight_decay: 0.01
+      gradient_accumulation_steps: 2
+      fp16: true
+      random_state: 42
+  roberta:
+    scope: exploratory
+    estimator: transformer
+    params:
+      model_name: pucpr/biobertpt-all
+      max_length: 128
+      learning_rate: 2.0e-5
+      batch_size: 16
+      epochs: 4
+      random_state: 42
+  deberta:
+    scope: exploratory
+    estimator: transformer
+    params:
+      model_name: microsoft/mdeberta-v3-base
+      max_length: 128
+      learning_rate: 2.0e-5
+      batch_size: 8
+      epochs: 4
+      random_state: 42
+
+# --- LLM open-source (Ollama) — ver llm.yaml --------------------------------
+llm:
+  ollama_primary:
+    scope: comparison
+    estimator: llm
+    params:
+      # Modelo definido em teste piloto (Proposta): sobrescreva aqui.
+      model: llama3.2
+      mode: few_shot               # zero_shot | few_shot
+      n_examples: 3
+      temperature: 0.0
+      max_tweets_per_prompt: 20
+  gemma:
+    scope: exploratory
+    estimator: llm
+    params:
+      model: gemma2
+      mode: few_shot
+      temperature: 0.0
+  mistral:
+    scope: exploratory
+    estimator: llm
+    params:
+      model: mistral
+      mode: few_shot
+      temperature: 0.0
+
+# --- Modelo híbrido proposto (principal contribuição) -----------------------
+# Embeddings do Transformer + atributos emocionais/temporais/comportamentais +
+# vetor psicológico do LLM -> XGBoost. Ver docs/guides/architecture.md.
+hybrid:
+  hybrid_xgboost:
+    scope: comparison
+    estimator: hybrid
+    feature_groups:
+      - semantic
+      - emotional
+      - temporal
+      - behavioral
+      - psychological
+      - linguistic
+    params:
+      head: xgboost
+      n_estimators: 800
+      max_depth: 6
+      learning_rate: 0.03
+      subsample: 0.8
+      colsample_bytree: 0.7
+      min_child_weight: 3
+      reg_lambda: 2.0
+      objective: multi:softprob
+      eval_metric: mlogloss
+      tree_method: hist
+      random_state: 42
+      n_jobs: -1
+
+# --- Tratamento de desbalanceamento -----------------------------------------
+class_imbalance:
+  strategy: class_weight          # class_weight | none | smote
+  # SMOTE não é aplicado a embeddings por padrão: interpolar vetores semânticos
+  # cria "usuários" que não existem e infla a métrica de validação.

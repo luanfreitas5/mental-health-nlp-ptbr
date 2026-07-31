@@ -1,0 +1,78 @@
+# =============================================================================
+# paths.yaml — todos os caminhos do projeto, relativos à raiz do repositório.
+#
+# Resolvidos para `pathlib.Path` absolutos por `config.paths.ProjectPaths`.
+# Nenhum caminho deve ser escrito diretamente no código (ver CLAUDE.md).
+# =============================================================================
+
+# --- Dados ------------------------------------------------------------------
+data:
+  root: data
+  raw: data/raw
+  external: data/external
+  interim: data/interim
+  processed: data/processed
+
+  # Etapa 1 — coleta
+  seed_tweets: data/raw/seed_tweets           # busca por palavras-chave/hashtags
+  user_histories: data/raw/user_histories     # 1 parquet por usuário (histórico)
+  user_metadata: data/raw/users_metadata.parquet
+
+  # Etapa 2/3 — processamento e rotulação
+  tweets_clean: data/interim/tweets_clean.parquet
+  tweets_labeled: data/interim/tweets_labeled.parquet
+  psychological_scores: data/interim/psychological_scores.parquet
+  embeddings: data/interim/embeddings                # <modelo>.npy + <modelo>_index.parquet
+
+  # Etapa 4/5 — matriz final e partições
+  user_features: data/processed/user_features.parquet
+  user_labels: data/processed/user_labels.parquet
+  splits: data/processed/splits.parquet
+  dataset_manifest: data/processed/dataset_manifest.json
+
+# --- Consultas de coleta (arquivos .txt, um termo por linha) -----------------
+queries:
+  root: configs/queries
+  depression_keywords: configs/queries/depression_keywords.txt
+  depression_hashtags: configs/queries/depression_hashtags.txt
+  suicidal_keywords: configs/queries/suicidal_keywords.txt
+  suicidal_hashtags: configs/queries/suicidal_hashtags.txt
+  control_hashtags: configs/queries/control_hashtags.txt
+
+# --- Léxicos psicolinguísticos (um termo/expressão por linha) ----------------
+lexicons:
+  root: configs/lexicons
+  death: configs/lexicons/death.txt
+  loneliness: configs/lexicons/loneliness.txt
+  hopelessness: configs/lexicons/hopelessness.txt
+  isolation: configs/lexicons/isolation.txt
+  negative_emotion: configs/lexicons/negative_emotion.txt
+  insomnia: configs/lexicons/insomnia.txt
+  stopwords: configs/lexicons/stopwords_ptbr.txt
+
+# --- Modelos ----------------------------------------------------------------
+models:
+  root: models
+  checkpoints: models/checkpoints
+  artifacts: models/artifacts
+  registry: models/registry
+
+# --- Relatórios -------------------------------------------------------------
+reports:
+  root: reports
+  figures: reports/figures
+  tables: reports/tables
+  metrics: reports/metrics
+  statistics: reports/statistics
+  ablation: reports/ablation
+  interpretability: reports/interpretability
+  model_cards: reports/model_cards
+  datasheets: reports/datasheets
+
+# --- Logs -------------------------------------------------------------------
+logs:
+  root: logs
+
+# --- Configurações ----------------------------------------------------------
+configs:
+  root: configs

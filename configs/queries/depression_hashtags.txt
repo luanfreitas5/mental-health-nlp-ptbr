@@ -1,0 +1,13 @@
+# Hashtags de depressão para a busca semente (twscrape).
+# Um termo por linha, com '#'. Linhas iniciadas por '# ' (com espaço) são comentário.
+#depressao
+#depressão
+#saudemental
+#saudementalimporta
+#depressed
+#desabafo
+#tristeza
+#ansiedade
+#solidao
+#solidão
+#burnout

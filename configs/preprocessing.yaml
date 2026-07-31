@@ -1,0 +1,77 @@
+# =============================================================================
+# preprocessing.yaml — limpeza e normalização textual.
+#
+# Duas colunas de texto sobrevivem à etapa, propositalmente:
+#   - `text_normalized`: PII removida, mas pontuação/emoji/caixa preservados.
+#     Entrada dos Transformers e do LLM (que dependem desses sinais).
+#   - `text_clean`: agressivamente normalizado (minúsculas, sem stopwords,
+#     lematizado). Entrada do TF-IDF, dos n-grams e das features lexicais.
+# Aplicar a limpeza agressiva ao BERTimbau destruiria informação que o modelo
+# usa — por isso os dois caminhos são mantidos separados.
+# =============================================================================
+
+deduplication:
+  by_tweet_id: true
+  by_text_within_user: true      # retweet manual / repost do mesmo texto
+  by_text_global: false          # textos iguais entre usuários são sinal, não ruído
+  keep: first
+
+# --- Normalização preservando semântica (para Transformers/LLM) -------------
+normalization:
+  unicode_form: NFC
+  strip_control_chars: true
+  collapse_whitespace: true
+  # Substituições por placeholder (removem PII sem destruir a estrutura da frase)
+  replace_urls: "URL"
+  replace_mentions: "@user"
+  replace_emails: "EMAIL"
+  replace_phone_numbers: "TELEFONE"
+  replace_numbers: null          # null = mantém números
+  # Hashtags: mantém o termo (#depressao -> depressao), pois carrega o conteúdo
+  unpack_hashtags: true
+  # Repetições expressivas: "muitooooo" -> "muitoo" (mantém a ênfase, reduz esparsidade)
+  collapse_repeated_chars: 2
+  demojize: false                # emoji preservado no texto normalizado
+
+# --- Limpeza agressiva (para TF-IDF / n-grams / léxicos) --------------------
+cleaning:
+  lowercase: true
+  remove_punctuation: true
+  remove_emojis: true
+  remove_accents: false          # acentos são informativos em pt-BR
+  remove_stopwords: true
+  stopwords_file: stopwords_ptbr.txt
+  # Stopwords que NÃO devem ser removidas: pronomes e negações são features
+  # centrais na literatura de detecção de depressão (foco em si mesmo, negação).
+  stopwords_whitelist:
+    - eu
+    - me
+    - mim
+    - meu
+    - minha
+    - meus
+    - minhas
+    - comigo
+    - nao
+    - não
+    - nunca
+    - nada
+    - ninguem
+    - ninguém
+    - sem
+  min_token_length: 2
+
+# --- Tokenização e lematização ----------------------------------------------
+tokenization:
+  # spaCy é opcional: se `pt_core_news_sm` não estiver instalado, o projeto cai
+  # num tokenizador por regex e desativa a lematização (avisando no log).
+  backend: spacy                 # spacy | regex
+  spacy_model: pt_core_news_sm
+  lemmatize: true
+  batch_size: 256
+  n_process: 1
+
+# --- Filtros pós-limpeza ----------------------------------------------------
+filters:
+  min_tokens_per_tweet: 3
+  drop_empty_after_cleaning: true

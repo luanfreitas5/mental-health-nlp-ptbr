@@ -1,0 +1,23 @@
+# Palavras-chave de depressão para a busca semente (twscrape).
+# Um termo por linha. Linhas iniciadas por '#' e linhas vazias são ignoradas.
+# Termos com espaço são buscados como expressão exata (aspas adicionadas em código).
+depressão
+deprimido
+deprimida
+tristeza profunda
+solidão
+sem esperança
+não vejo sentido
+vazio por dentro
+não aguento mais
+cansado de tudo
+cansada de tudo
+me sinto sozinho
+me sinto sozinha
+sem vontade de nada
+nada faz sentido
+ninguém se importa
+me sinto um fardo
+não sinto mais nada
+chorando sem motivo
+crise de choro

@@ -1,0 +1,24 @@
+# Léxico — expressões de desesperança.
+# A desesperança é, na literatura clínica, um dos preditores mais fortes de
+# risco suicida — mais que a tristeza isolada.
+# Um termo/expressão por linha, minúsculas. '#' inicia comentário.
+sem esperança
+sem esperanca
+sem futuro
+sem saída
+sem saida
+não vai melhorar
+nunca vai melhorar
+nada faz sentido
+não vejo sentido
+não adianta
+inútil
+perdido
+desisti
+desistir
+não tem jeito
+sem perspectiva
+tanto faz
+cansado de tentar
+cansada de tentar
+não vale a pena

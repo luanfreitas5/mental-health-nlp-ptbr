@@ -1,0 +1,79 @@
+# =============================================================================
+# config.yaml — configurações gerais do projeto.
+#
+# Validado em runtime por `config.settings.GeneralConfig` (Pydantic). Qualquer
+# chave desconhecida ou tipo inválido faz o pipeline falhar no startup, e não
+# no meio de uma execução longa de coleta/treinamento.
+# =============================================================================
+
+project:
+  name: mental-health-nlp-ptbr
+  description: >-
+    Detecção longitudinal de sinais de depressão e ideação suicida em redes
+    sociais com Transformers e Modelos de Linguagem.
+  version: "0.1.0"
+  language: pt-BR
+  timezone: America/Sao_Paulo
+  random_seed: 42
+
+# --- Variável-alvo ----------------------------------------------------------
+# Constructo principal: rótulo do USUÁRIO (não do tweet individual).
+target:
+  column: user_label
+  classes:
+    - controle
+    - depressao
+    - ideacao_suicida
+  # Classes de risco (usadas em métricas binarizadas "risco vs. controle").
+  risk_classes:
+    - depressao
+    - ideacao_suicida
+  # F1-macro: o custo de um falso negativo (não detectar risco) é muito maior
+  # que o de um falso positivo (encaminhar para triagem humana), e as classes
+  # são desbalanceadas — média macro impede que a classe majoritária domine.
+  main_metric: f1_macro
+  # Objetivo secundário (análise de sensibilidade): depressão e ideação suicida
+  # coocorrem na prática clínica; o modo multirrótulo mede se a formulação
+  # multiclasse mascara casos de coocorrência.
+  multilabel_analysis: true
+
+# --- Particionamento --------------------------------------------------------
+# A unidade amostral é o USUÁRIO. Todo tweet de um usuário fica na mesma
+# partição — caso contrário haveria vazamento de estilo/vocabulário entre
+# treino e teste (o modelo reconheceria a pessoa, não o sinal clínico).
+split:
+  group_column: user_id
+  stratify_column: user_label
+  test_size: 0.20
+  val_size: 0.10
+  shuffle: true
+
+# --- Validação cruzada ------------------------------------------------------
+cross_validation:
+  n_splits: 5
+  n_repeats: 1
+  strategy: stratified_group_kfold
+
+# --- Rastreamento de experimentos (MLflow) ----------------------------------
+experiment:
+  enabled: true
+  tracking_uri: mlruns
+  experiment_name: mental-health-nlp-ptbr
+  # Registra o modelo escolhido no MLflow Model Registry (não apenas .joblib).
+  register_best_model: true
+  registered_model_name: mental-health-user-classifier
+  log_artifacts: true
+
+# --- Privacidade / LGPD -----------------------------------------------------
+# Ver docs/guides/ethics.md e reports/datasheets/. Nenhum identificador direto
+# (handle, nome de exibição, URL de perfil) sobrevive à etapa de ingestão.
+privacy:
+  pseudonymize_user_ids: true      # SHA-256 com salt vindo do .env
+  drop_display_names: true
+  scrub_mentions: true             # @fulano -> @user
+  scrub_urls: true                 # https://... -> URL
+  scrub_emails: true
+  scrub_phone_numbers: true
+  # Nunca escrever texto bruto de tweet em log (apenas contagens/hashes).
+  forbid_text_in_logs: true
+  salt_env_var: PSEUDONYMIZATION_SALT
