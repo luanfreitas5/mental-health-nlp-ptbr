@@ -84,7 +84,7 @@ required-environments = [
 # gitpython < 3.1.51 (puxado pelo mlflow) tem 2 CVEs corrigidos na 3.1.51:
 # GHSA-2f96-g7mh-g2hx e GHSA-v396-v7q4-x2qj.
 # numba < 0.57.1 (puxado por alguns pacotes) tem CVE-2024-28292.
-constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"] 
+constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"]
 
 [[tool.uv.index]]
 name = "pytorch-cu129"
