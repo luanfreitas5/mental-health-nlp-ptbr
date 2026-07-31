@@ -13,7 +13,7 @@ que a distribuição das classes já entrega sozinha.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from sklearn.base import BaseEstimator
@@ -84,7 +84,10 @@ def build_estimator(estimator: str, params: dict[str, Any], n_classes: int) -> B
             raise MissingDependencyError(
                 "lightgbm não está instalado. Rode 'uv sync --dev'."
             ) from error
-        return LGBMClassifier(**params)
+        # Os stubs do lightgbm não anotam LGBMClassifier como subclasse de
+        # BaseEstimator, embora seja em tempo de execução (herança dinâmica
+        # via `_LGBMClassifierBase`).
+        return cast(BaseEstimator, LGBMClassifier(**params))
 
     raise UnknownModelError(
         f"Estimador tabular desconhecido: '{estimator}'. "

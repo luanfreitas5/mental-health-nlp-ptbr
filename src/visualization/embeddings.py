@@ -13,7 +13,7 @@ virassem features, isso passaria a ser vazamento.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,17 +65,21 @@ def reduce_dimensions(
     if method == "umap":
         try:
             import umap
-
+        except ImportError:
+            logger.warning("Pacote 'umap-learn' ausente: usando t-SNE como alternativa.")
+            method = "tsne"
+        else:
             reducer = umap.UMAP(
                 n_components=2,
                 random_state=random_state,
                 n_neighbors=min(15, max(2, n_samples - 1)),
                 min_dist=0.1,
             )
-            return reducer.fit_transform(embeddings), "UMAP"
-        except ImportError:
-            logger.warning("Pacote 'umap-learn' ausente: usando t-SNE como alternativa.")
-            method = "tsne"
+            # Os stubs do umap-learn anotam `fit_transform` com um retorno
+            # genérico demais (inclui `coo_matrix`, nunca produzido nesta
+            # chamada, que usa `array` denso como entrada).
+            coords = cast(np.ndarray, reducer.fit_transform(embeddings))
+            return coords, "UMAP"
 
     if method == "tsne":
         # A perplexidade precisa ser menor que o número de amostras; com
