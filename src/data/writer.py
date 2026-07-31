@@ -1,0 +1,170 @@
+"""Escrita de artefatos de dados em Parquet.
+
+Parquet com compressão ``zstd`` em vez de CSV: preserva o tipo das colunas
+(uma data que volta como string quebra todas as features temporais), ocupa
+uma fração do espaço e permite leitura preguiçosa por coluna, que é o que
+torna viável processar históricos de milhares de usuários.
+
+A escrita é atômica — arquivo temporário seguido de ``Path.replace`` — para
+que uma interrupção não deixe um Parquet truncado que a etapa seguinte leria
+como corrompido.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import polars as pl
+
+from config.logging import get_logger
+from constants.defaults import PARQUET_COMPRESSION
+from utils.hashing import hash_dataframe
+
+logger = get_logger(__name__)
+
+
+def write_parquet(
+    frame: pl.DataFrame,
+    path: Path,
+    *,
+    compression: str = PARQUET_COMPRESSION,
+    log_hash: bool = True,
+) -> Path:
+    """Grava um DataFrame em Parquet de forma atômica.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        DataFrame a persistir.
+    path : Path
+        Caminho de destino (``.parquet``).
+    compression : str, optional
+        Codec de compressão, by default ``"zstd"``.
+    log_hash : bool, optional
+        Registra o hash do conteúdo no log, by default True. É o que permite
+        confirmar, depois, que duas execuções produziram os mesmos dados.
+
+    Returns
+    -------
+    Path
+        Caminho gravado.
+
+    Examples
+    --------
+    >>> write_parquet(pl.DataFrame({"a": [1]}), Path("data/interim/x.parquet"))  # doctest: +SKIP
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    temporary = target.with_suffix(".parquet.tmp")
+    frame.write_parquet(temporary, compression=compression)  # type: ignore[arg-type]
+    temporary.replace(target)
+
+    message = "Gravado %s (%d linhas, %d colunas)"
+    if log_hash:
+        logger.info(
+            f"{message} | sha256=%s",
+            target.name,
+            frame.height,
+            frame.width,
+            hash_dataframe(frame)[:16],
+        )
+    else:
+        logger.info(message, target.name, frame.height, frame.width)
+
+    return target
+
+
+def write_partitioned(
+    frame: pl.DataFrame,
+    directory: Path,
+    partition_column: str,
+    *,
+    compression: str = PARQUET_COMPRESSION,
+) -> list[Path]:
+    """Grava um Parquet por valor distinto de uma coluna.
+
+    Usado na coleta: um arquivo por usuário permite retomar uma coleta
+    interrompida sem reprocessar quem já foi baixado.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        DataFrame a particionar.
+    directory : Path
+        Diretório de destino.
+    partition_column : str
+        Coluna que define as partições (normalmente ``user_id``).
+    compression : str, optional
+        Codec de compressão, by default ``"zstd"``.
+
+    Returns
+    -------
+    list of Path
+        Caminhos gravados, em ordem determinística.
+
+    Raises
+    ------
+    KeyError
+        Se a coluna de partição não existir.
+
+    Examples
+    --------
+    >>> write_partitioned(frame, Path("data/raw/user_histories"), "user_id")  # doctest: +SKIP
+    """
+    if partition_column not in frame.columns:
+        raise KeyError(
+            f"Coluna de partição '{partition_column}' ausente. Disponíveis: {frame.columns}"
+        )
+
+    target_dir = Path(directory)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    for (value,), partition in frame.partition_by(
+        partition_column, as_dict=True, maintain_order=True
+    ).items():
+        path = target_dir / f"{value}.parquet"
+        written.append(write_parquet(partition, path, compression=compression, log_hash=False))
+
+    logger.info("Gravadas %d partições em %s.", len(written), target_dir)
+    return written
+
+
+def append_parquet(frame: pl.DataFrame, path: Path) -> Path:
+    """Concatena um DataFrame a um Parquet existente.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        Novas linhas.
+    path : Path
+        Arquivo de destino (criado se não existir).
+
+    Returns
+    -------
+    Path
+        Caminho gravado.
+
+    Raises
+    ------
+    ValueError
+        Se o esquema do novo bloco não for compatível com o do arquivo.
+
+    Examples
+    --------
+    >>> append_parquet(novos, Path("data/interim/tweets_clean.parquet"))  # doctest: +SKIP
+    """
+    target = Path(path)
+    if not target.is_file():
+        return write_parquet(frame, target)
+
+    existing = pl.read_parquet(target)
+    if set(existing.columns) != set(frame.columns):
+        raise ValueError(
+            f"Esquemas incompatíveis ao concatenar em {target.name}. "
+            f"Existente: {sorted(existing.columns)}; novo: {sorted(frame.columns)}."
+        )
+
+    combined = pl.concat([existing, frame.select(existing.columns)], how="vertical")
+    return write_parquet(combined, target)
