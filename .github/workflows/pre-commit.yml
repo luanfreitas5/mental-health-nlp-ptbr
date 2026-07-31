@@ -1,0 +1,41 @@
+# =============================================================================
+# Pre-commit — roda todos os hooks de .pre-commit-config.yaml sobre o repo
+# inteiro no CI (Ruff, detect-secrets, nbstripout, higiene de arquivos).
+# Garante que quem esqueceu de rodar `make hooks` localmente não quebre o
+# padrão do projeto. O hook do commitizen (stage commit-msg) não roda aqui,
+# pois não se aplica a --all-files.
+# =============================================================================
+name: Pre-commit
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: pre-commit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    name: Rodar hooks (--all-files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - run: uv sync --dev
+
+      - name: Cache dos ambientes dos hooks
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Rodar todos os hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure

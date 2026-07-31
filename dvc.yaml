@@ -1,0 +1,142 @@
+# =============================================================================
+# dvc.yaml — DAG reprodutível do pipeline.
+#
+# O DVC complementa o Git: o código é versionado no Git, os dados e modelos
+# (vários GB) ficam no remote do DVC, com ponteiros commitados. As dependências
+# declaradas abaixo permitem ao DVC reexecutar **apenas** as etapas afetadas por
+# uma mudança — o mesmo princípio do acoplamento por arquivos, agora com
+# detecção automática do que precisa rodar.
+#
+# Setup:
+#   uv sync --extra dvc --dev
+#   dvc init
+#   dvc remote add -d storage <url>
+#
+# Uso:
+#   dvc repro              # reexecuta o que mudou
+#   dvc repro --dry        # mostra o que seria reexecutado
+#   dvc dag                # visualiza o grafo
+#   dvc push               # envia dados e modelos para o remote
+#
+# A etapa `collect` NÃO faz parte do DAG: exige aprovação ética, contas do
+# twscrape e leva dias. É executada manualmente (`make collect`).
+# =============================================================================
+
+stages:
+  preprocess:
+    cmd: python src/main.py --stage preprocess
+    deps:
+      - src/preprocessing
+      - src/data/reader.py
+      - configs/preprocessing.yaml
+      - configs/collection.yaml
+      - configs/lexicons/stopwords_ptbr.txt
+      - data/raw/user_histories
+    outs:
+      - data/interim/tweets_clean.parquet
+
+  label:
+    cmd: python src/main.py --stage label
+    deps:
+      - src/labeling/sentiment.py
+      - src/labeling/emotion.py
+      - src/labeling/weak_supervision.py
+      - src/labeling/validation.py
+      - configs/labeling.yaml
+      - configs/lexicons
+      - data/interim/tweets_clean.parquet
+    outs:
+      - data/interim/tweets_labeled.parquet
+      - data/processed/user_labels.parquet
+    metrics:
+      - reports/metrics/labeling_quality.json:
+          cache: false
+
+  psych:
+    cmd: python src/main.py --stage psych
+    deps:
+      - src/labeling/llm.py
+      - src/labeling/prompt.py
+      - configs/llm.yaml
+      - data/interim/tweets_clean.parquet
+    outs:
+      - data/interim/psychological_scores.parquet
+
+  embed:
+    cmd: python src/main.py --stage embed
+    deps:
+      - src/features/semantic.py
+      - configs/features.yaml
+      - data/interim/tweets_clean.parquet
+    outs:
+      - data/interim/embeddings
+
+  features:
+    cmd: python src/main.py --stage features
+    deps:
+      - src/features
+      - configs/features.yaml
+      - data/interim/tweets_labeled.parquet
+      - data/interim/embeddings
+      - data/processed/user_labels.parquet
+    outs:
+      - data/processed/user_features.parquet
+    metrics:
+      - reports/metrics/features_summary.json:
+          cache: false
+
+  split:
+    cmd: python src/main.py --stage split
+    deps:
+      - src/data/splitter.py
+      - configs/config.yaml
+      - data/processed/user_features.parquet
+    outs:
+      - data/processed/splits.parquet
+
+  train:
+    cmd: python src/main.py --stage train
+    deps:
+      - src/models
+      - src/training
+      - configs/model_params.yaml
+      - data/processed/user_features.parquet
+      - data/processed/splits.parquet
+    outs:
+      - models/artifacts
+    metrics:
+      - reports/metrics/cross_validation.json:
+          cache: false
+
+  evaluate:
+    cmd: python src/main.py --stage evaluate
+    deps:
+      - src/evaluation
+      - src/interpretability
+      - configs/evaluation.yaml
+      - models/artifacts
+      - data/processed/user_features.parquet
+      - data/processed/splits.parquet
+    metrics:
+      - reports/metrics/evaluation.json:
+          cache: false
+    plots:
+      - reports/tables/model_comparison.csv:
+          cache: false
+      - reports/ablation/ablation_summary.csv:
+          cache: false
+
+  report:
+    cmd: python src/main.py --stage report
+    deps:
+      - src/visualization
+      - src/reports_templates
+      - reports/metrics/evaluation.json
+      - data/processed/user_features.parquet
+    outs:
+      - reports/figures:
+          cache: false
+      - reports/model_cards:
+          cache: false
+      - reports/datasheets:
+          cache: false

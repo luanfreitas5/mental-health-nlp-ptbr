@@ -1,0 +1,106 @@
+# =============================================================================
+# mkdocs.yml — documentação com MkDocs Material + mkdocstrings.
+#
+# A referência da API é gerada automaticamente a partir das docstrings NumPy
+# (em pt-BR). Publicada no GitHub Pages via .github/workflows/docs.yml.
+#
+# Servir localmente:  make docs-serve
+# Publicar:           make docs-deploy
+# =============================================================================
+
+site_name: mental-health-nlp-ptbr
+site_description: >-
+  Detecção longitudinal de sinais de depressão e ideação suicida em redes
+  sociais com Transformers e Modelos de Linguagem.
+site_author: Luan Freitas
+repo_url: https://github.com/luanfreitas5/mental-health-nlp-ptbr
+repo_name: luanfreitas5/mental-health-nlp-ptbr
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: pt-BR
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Modo escuro
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Modo claro
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+
+plugins:
+  - search:
+      lang: pt
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy        # docstrings no formato NumPy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+            filters: ["!^_"]              # oculta membros privados
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Início: index.md
+  - Guias:
+      - Setup: guides/setup.md
+      - Uso: guides/usage.md
+      - Arquitetura: guides/architecture.md
+      - Ética e LGPD: guides/ethics.md
+  - Referência da API: reference.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/luanfreitas5
+
+copyright: >-
+  Código sob licença MIT. Os dados não são redistribuídos.

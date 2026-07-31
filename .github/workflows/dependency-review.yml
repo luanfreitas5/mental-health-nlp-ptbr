@@ -1,0 +1,32 @@
+# =============================================================================
+# Dependency Review — audita as dependências ALTERADAS em cada PR contra a
+# advisory database do GitHub (CVEs conhecidas e licenças incompatíveis).
+# Complementa o pip-audit (ci.yml, roda em todo push + semanalmente) e o
+# Dependabot (dependabot.yml, PRs semanais de atualização): este workflow
+# pega o problema no momento em que a dependência nova é introduzida no PR.
+# =============================================================================
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Revisar dependências alteradas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always

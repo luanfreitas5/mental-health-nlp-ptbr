@@ -1,0 +1,52 @@
+# =============================================================================
+# Tests — pytest na matriz Python (3.10–3.12) × SO (ubuntu/macos/windows).
+# Cobertura mínima de 80% é garantida pelo fail_under do coverage (pyproject).
+# O upload para o Codecov roda apenas uma vez (ubuntu + 3.12).
+# =============================================================================
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Instalar libomp (macOS - necessario para o LightGBM)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
+      - name: Instalar dependências
+        run: uv sync --dev
+
+      - name: Rodar testes
+        run: uv run pytest -m "not slow"
+
+      - name: Upload de cobertura (Codecov)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -1,0 +1,62 @@
+# =============================================================================
+# Reproducibility — garante que o ambiente e os notebooks commitados
+# refletem exatamente o que está versionado:
+#   1) uv.lock sincronizado com pyproject.toml (senão `uv sync` no CI/máquina
+#      de outro dev resolveria versões diferentes silenciosamente);
+#   2) notebooks sem outputs sujos e lintados com o mesmo Ruff do resto do
+#      código (nbstripout/nbqa já são dependências do projeto, mas não
+#      rodavam em CI até agora).
+#
+# Observação: `dvc.yaml` declara o DAG do pipeline, mas o `dvc init` e o
+# remote de armazenamento são configurados por quem for reproduzir o estudo
+# (os dados não são redistribuídos — ver reports/datasheets/). Por isso não
+# há um job `dvc repro --dry` aqui: ele exigiria os dados em disco.
+# =============================================================================
+name: Reproducibility
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: reproducibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lockfile:
+    name: uv.lock sincronizado
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - name: Falhar se uv.lock estiver desatualizado
+        run: uv lock --check
+
+  notebooks:
+    name: Notebooks limpos e lintados
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - run: uv sync --dev
+
+      # `--verify` apenas checa e falha; sem ele, o nbstripout reescreveria os
+      # arquivos no runner e o job passaria mesmo com outputs commitados.
+      - name: Checar se algum notebook tem output não removido
+        run: uv run nbstripout --verify notebooks/*.ipynb
+
+      - name: Lint dos notebooks (nbqa + ruff)
+        run: uv run nbqa ruff notebooks/

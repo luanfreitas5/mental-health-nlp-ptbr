@@ -1,0 +1,64 @@
+# =============================================================================
+# .pre-commit-config.yaml — apenas checagens RÁPIDAS, para não criar atrito no
+# commit. Type checking (basedPyright), segurança (bandit) e complexidade
+# (xenon/radon) rodam no CI, conforme o CLAUDE.md.
+#
+# Setup:
+#   uv run pre-commit install
+#   uv run pre-commit install --hook-type commit-msg   # ativa o commitizen
+#   uv run detect-secrets scan > .secrets.baseline      # gera o baseline
+# =============================================================================
+
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  # --- Higiene básica de arquivos -----------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]   # bloqueia commit de dados/modelos grandes
+      - id: detect-private-key
+
+  # --- Ruff: lint + format -------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # --- detect-secrets: impede vazamento de credenciais ---------------------
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+
+  # --- nbstripout: remove outputs de notebooks antes do commit -------------
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+
+  # --- commitizen: valida Conventional Commits (stage commit-msg) ----------
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.27.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  # --- Smoke tests rápidos (local) -----------------------------------------
+  - repo: local
+    hooks:
+      - id: pytest-smoke
+        name: pytest (smoke)
+        entry: uv run pytest -m smoke -q --no-cov
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

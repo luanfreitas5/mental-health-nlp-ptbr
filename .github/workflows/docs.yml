@@ -1,0 +1,72 @@
+# =============================================================================
+# Docs — valida o build da documentação (MkDocs Material) em todo PR e
+# publica no GitHub Pages via `mkdocs gh-deploy` a cada push em main.
+# Configure Pages para servir a partir do branch gh-pages nas settings.
+# =============================================================================
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "mkdocs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "mkdocs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Validar build (--strict)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - run: uv sync --dev
+
+      - name: Build estrito (falha em link quebrado / warning)
+        run: uv run mkdocs build --strict
+
+  deploy:
+    name: Build & Deploy
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # necessário para o gh-deploy publicar no branch gh-pages
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - run: uv sync --dev
+
+      - name: Configurar identidade do git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Publicar documentação
+        run: uv run mkdocs gh-deploy --force
