@@ -141,7 +141,7 @@ dvc = [
 
 # Dashboard interativo de resultados (Streamlit + Plotly)
 app = [
-    "streamlit>=1.38",
+    "streamlit>=1.60.0",
     "plotly>=5.24",
 ]
 
