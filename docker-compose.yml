@@ -1,0 +1,90 @@
+# =============================================================================
+# docker-compose.yml — orquestra o pipeline e os serviços auxiliares.
+#
+#   docker compose run --rm pipeline --stage features
+#   docker compose up mlflow          # http://localhost:5000
+#   docker compose up dashboard       # http://localhost:8501
+#   docker compose --profile llm up ollama
+# =============================================================================
+
+services:
+  # --- Pipeline -------------------------------------------------------------
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mental-health-nlp-ptbr:latest
+    container_name: mhnlp-pipeline
+    environment:
+      # As variáveis vêm do .env do host; nenhuma credencial é embutida na imagem.
+      PSEUDONYMIZATION_SALT: ${PSEUDONYMIZATION_SALT:?defina PSEUDONYMIZATION_SALT no .env}
+      ETHICS_APPROVAL_ID: ${ETHICS_APPROVAL_ID:-}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      # `configs` em modo leitura: o contêiner consome a configuração,
+      # não a altera.
+      - ./configs:/app/configs:ro
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./mlruns:/app/mlruns
+    depends_on:
+      - mlflow
+    command: ["--status"]
+
+  # --- Rastreamento de experimentos ----------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    container_name: mhnlp-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+      - ./mlartifacts:/mlartifacts
+    command: >-
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlruns/mlflow.db
+      --default-artifact-root /mlartifacts
+
+  # --- LLM local (perfil opcional) ------------------------------------------
+  # O processamento é local por exigência da LGPD: textos sensíveis não são
+  # enviados a serviços de terceiros.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: mhnlp-ollama
+    profiles: ["llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # --- Dashboard (perfil opcional) ------------------------------------------
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mental-health-nlp-ptbr:latest
+    container_name: mhnlp-dashboard
+    profiles: ["app"]
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./reports:/app/reports:ro
+      - ./app:/app/app:ro
+    entrypoint: ["streamlit", "run", "app/dashboard.py"]
+    command: ["--server.address=0.0.0.0", "--server.port=8501"]
+
+volumes:
+  ollama-models:

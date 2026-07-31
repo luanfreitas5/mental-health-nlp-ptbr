@@ -1,0 +1,403 @@
+# =============================================================================
+# pyproject.toml — fonte única de verdade para dependências e configuração de
+# ferramentas. Alinhado ao CLAUDE.md (Data Science Projects).
+# Gerenciador recomendado: uv. Lock file (uv.lock) DEVE ser commitado.
+# =============================================================================
+
+[project]
+name = "mental-health-nlp-ptbr"
+version = "0.1.0"
+description = "Detecção longitudinal de sinais de depressão e ideação suicida em redes sociais com Transformers e Modelos de Linguagem."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Luan Freitas", email = "luan.mgf@gmail.com" }]
+keywords = [
+    "nlp",
+    "mental-health",
+    "depression-detection",
+    "suicidal-ideation",
+    "transformers",
+    "bertimbau",
+    "llm",
+    "portuguese",
+    "social-media",
+    "longitudinal-analysis",
+]
+classifiers = [ # https://pypi.org/classifiers/
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+    "Natural Language :: Portuguese (Brazilian)",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+]
+
+# --- Dependências de runtime (instale apenas o que o projeto precisar) -------
+dependencies = [
+    # Manipulação de dados (preferência: polars lazy) + storage colunar
+    "polars>=1.0",
+    "pyarrow>=16.0",
+    "numpy>=1.26",
+    "pandas>=2.2",                  # exigido pelo seaborn e pela interop do sklearn
+    # Contratos de dados
+    "pandera[polars]>=0.20",
+    # Configuração e validação em runtime
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "tomli>=2.0; python_version < '3.11'",  # tomllib só existe a partir do 3.11
+    # Progresso e logging
+    "rich>=13.7",
+    # Visualização
+    "seaborn>=0.13",
+    "matplotlib>=3.9",
+    # Modelagem clássica e o modelo híbrido (contribuição central da proposta)
+    "scikit-learn>=1.5",
+    "xgboost>=2.1",
+    "joblib>=1.4",
+    # Testes estatísticos: Wilcoxon, Friedman, McNemar (Análises Estatísticas)
+    "scipy>=1.13",
+    # Rastreamento de experimentos + Model Registry
+    "mlflow>=2.16",
+    # Interpretabilidade — contribuição científica declarada (SHAP Values)
+    "shap>=0.46",
+]
+
+[tool.uv]
+# O projeto não é instalado como pacote: `src/` é a raiz de importação (ver
+# CLAUDE.md, "Import style"). Instalar `src` no site-packages exigiria imports
+# com o prefixo `src.`, contrariando o padrão adotado. O pytest resolve os
+# imports por `pythonpath = ["src"]` e `src/main.py` insere o diretório em
+# `sys.path` ao ser executado diretamente.
+package = false
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+# Restrições em dependências transitivas por segurança (pip-audit).
+# gitpython < 3.1.51 (puxado pelo mlflow) tem 2 CVEs corrigidos na 3.1.51:
+# GHSA-2f96-g7mh-g2hx e GHSA-v396-v7q4-x2qj.
+# numba < 0.57.1 (puxado por alguns pacotes) tem CVE-2024-28292.
+constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"] 
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }
+torchvision = { index = "pytorch-cu129" }
+torchaudio = { index = "pytorch-cu129" }
+
+# --- Extras opcionais (ative por projeto: uv sync --extra name, etc.) -------
+[project.optional-dependencies]
+# Dependências pesadas de LLM: encoders de sentimento/emoção, embeddings
+# semânticos, fine-tuning do BERTimbau e cliente do Ollama (etapas 3, 4, 5 e 8).
+llm = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "accelerate>=0.33",
+    "datasets>=2.20",
+    "ollama>=0.3",
+]
+
+# Coleta no X/Twitter (etapa 1). Isolada porque só roda com aprovação
+# CEP/CONEP e contas configuradas — o restante do pipeline não depende dela.
+collect = [
+    "twscrape>=0.13",
+]
+
+# Tokenização e lematização em pt-BR. O modelo `pt_core_news_sm` exige
+# download à parte (`make spacy-model`); sem ele o projeto cai no fallback
+# por regex, com aviso no log.
+nlp = [
+    "spacy>=3.7",
+]
+
+# Figuras opcionais: nuvens de palavras, rede de similaridade e projeção
+# UMAP dos embeddings. Ausentes, as figuras correspondentes são puladas.
+viz = [
+    "wordcloud>=1.9",
+    "networkx>=3.2",
+    "umap-learn>=0.5",
+]
+
+# Extensão exploratória (Proposta, "Modelos Avaliados"): LightGBM.
+exploratory = [
+    "lightgbm>=4.5",
+]
+
+# Versionamento de dados/modelos (corpora somam vários GB)
+dvc = [
+    "dvc>=3.51",
+]
+
+# Dashboard interativo de resultados (Streamlit + Plotly)
+app = [
+    "streamlit>=1.38",
+    "plotly>=5.24",
+]
+
+
+# --- Dependências de desenvolvimento (não publicadas; PEP 735) --------------
+[dependency-groups]
+dev = [
+    # Lint + format
+    "ruff>=0.5",                    # Um linter e formatador de código Python extremamente rápido - substitui flake8/isort/black
+    # Type checking (roda no CI, não no pre-commit)
+    "basedpyright>=1.13",           # Um type checker estático para Python, baseado no Pyright da Microsoft - substitui mypy
+    # Segurança (roda no CI)
+    "bandit>=1.7",                  # Um analisador de segurança para código Python
+    "pip-audit>=2.7",               # Um auditor de segurança para dependências Python (substitui o safety, que arrastava nltk vulnerável)
+    "detect-secrets>=1.5",          # Um detector de segredos em código Python
+    # Qualidade / complexidade / docstrings
+    "vulture>=2.11",                # Um verificador de código morto para Python
+    "refurb>=2.0",                  # Um utilitário para refatoração de código Python
+    "xenon>=0.9",                   # Um analisador de complexidade para Python
+    "radon>=6.0",                   # Um analisador de complexidade para Python
+    "interrogate>=1.7",             # Um verificador de docstrings para Python
+    # Testes
+    "pytest>=8.2",                  # Um framework de teste para Python
+    "pytest-cov>=5.0",              # Um plugin para pytest que fornece cobertura de código
+    "hypothesis>=6.100",            # Um framework de teste property-based para Python
+    # Notebooks
+    "nbqa>=1.8",                    # Um utilitário para aplicar linters a notebooks do Jupyter
+    "nbstripout>=0.7",              # Um utilitário para remover saídas e metadados de notebooks do Jupyter
+    # Workflow
+    "pre-commit>=3.7",              # Um framework para gerenciar hooks de commit no Git
+    "commitizen>=4.16.5",             # Um utilitário para manter o histórico de commits consistente
+    # Documentação
+    "mkdocs-material>=9.7.7",         # Um tema para MkDocs
+    "mkdocstrings[python]>=0.25",   # Um plugin para MkDocs que gera documentação a partir de docstrings
+    # Profiling (use sob demanda)
+    "scalene>=1.5",                 # Um profiler de performance para Python
+    # Ferramentas para rodar Data Wrangler no Vscode
+    "pip>=26.1.2",                  # Um gerenciador de pacotes para Python
+    "ipykernel>=7.3.0",             # Um kernel para Jupyter que executa código Python
+    "ipywidgets>=8.1.8"             # Um conjunto de widgets interativos para Jupyter
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Homepage = "https://github.com/luanfreitas5/mental-health-nlp-ptbr"
+Documentation = "https://luanfreitas5.github.io/mental-health-nlp-ptbr"
+Repository = "https://github.com/luanfreitas5/mental-health-nlp-ptbr"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+
+# =============================================================================
+# RUFF — lint + format (substitui flake8/isort/black)
+# =============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort (organização de imports)
+    "N",      # pep8-naming
+    "UP",     # pyupgrade (sintaxe moderna)
+    "B",      # flake8-bugbear (bugs comuns e más práticas)
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RET",    # flake8-return
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib (usar Path em vez de os.path)
+    "PD",     # pandas-vet — antipadrões específicos de pandas
+    "NPY",    # NumPy-specific rules
+    "PERF",   # perflint — antipadrões de performance
+    "RUF",    # regras específicas do próprio Ruff
+    "PL",     # pylint (subconjunto)
+    "TRY",    # tryceratops — boas práticas de exception handling
+]
+ignore = [
+    "PLR0913", # muitos argumentos em função — comum em pipelines de ML
+    "PLR2004", # "magic value" em comparação — comum em thresholds de modelo
+    "TRY003",  # mensagem longa em exceção customizada
+    "PLR0917", # muitos parâmetros em função — comum em pipelines de ML
+    "PLC0415", # import fora do topo — usado de propósito para dependências
+               # opcionais sob demanda (torch, transformers, shap, mlflow,
+               # ollama, xgboost, lightgbm, twscrape), para evitar ciclos de
+               # import (config.logging -> config.paths) e, nos testes, para
+               # isolar imports por caso de teste
+    "RUF001",  # caractere ambíguo em string — tipografia pt-BR intencional
+               # (×, –) em mensagens e docstrings
+    "RUF002",  # idem, em docstrings
+    "PERF203", # try/except em loop — usado de propósito para isolar falhas
+               # por item (modelo, etapa, tentativa) em loops pequenos; o
+               # custo de reexecutar tudo é maior que o overhead do try
+]
+
+[tool.ruff.lint.isort]
+# `src/` é a raiz de importação, então os pacotes de primeira parte são os
+# diretórios dentro dele — não "src" em si.
+known-first-party = [
+    "config",
+    "constants",
+    "data",
+    "evaluation",
+    "exceptions",
+    "experiment",
+    "features",
+    "interpretability",
+    "labeling",
+    "models",
+    "pipelines",
+    "preprocessing",
+    "reports_templates",
+    "schemas",
+    "training",
+    "utils",
+    "visualization",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"  # docstrings no formato NumPy
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "PLR2004", "S101"]  # fixtures, valores fixos e asserts em testes
+# Notebooks: imports após células de código (E402), imports só para efeito
+# colateral (F401), builtins do IPython como `display` (F821) e a semente
+# global do cabeçalho padrão de notebook (NPY002).
+"notebooks/*" = ["E402", "F401", "F821", "NPY002"]
+"app/*" = ["E402"]                      # sys.path precisa ser ajustado antes dos imports
+"src/main.py" = ["E402"]                # idem: `src/` entra no path antes de importar
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# =============================================================================
+# BASEDPYRIGHT — type checking estático (roda no CI)
+# =============================================================================
+[tool.basedpyright]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+include = ["src", "tests"]
+# `src/` é a raiz de importação: sem isto, `from config.settings import ...`
+# não resolveria para o type checker.
+extraPaths = ["src"]
+exclude = ["**/__pycache__", "notebooks", "data", "models", "reports", "logs"]
+reportMissingTypeStubs = false
+# Dependências opcionais (torch, transformers, twscrape, spacy, shap, umap,
+# wordcloud, networkx, ollama) são importadas sob demanda e podem não estar
+# instaladas no ambiente de checagem.
+reportMissingImports = "warning"
+
+# =============================================================================
+# BANDIT — análise de segurança (roda no CI)
+# =============================================================================
+[tool.bandit]
+exclude_dirs = ["tests", "notebooks", ".venv"]
+# B101 (uso de `assert`): os asserts do projeto são exclusivamente estreitamento
+# de tipo para o type checker, sempre precedidos de uma validação real que
+# levanta exceção própria (ex.: `validate_dataset` antes de
+# `assert dataset.labels is not None`). Não há verificação de segurança que
+# dependa de assert, então desativá-los com -O não altera o comportamento.
+skips = ["B101"]
+
+# =============================================================================
+# VULTURE — detecção de código morto
+# =============================================================================
+[tool.vulture]
+min_confidence = 80
+paths = ["src"]
+exclude = ["notebooks/"]
+# `cls` de validators Pydantic e parâmetros exigidos pela API do
+# scikit-learn/protocolo de context manager (`y`, `input_features`,
+# `exc_info`) são posicionalmente obrigatórios mas nunca usados no corpo.
+ignore_decorators = ["@field_validator", "@model_validator"]
+ignore_names = ["cls", "y", "input_features", "exc_info"]
+
+# =============================================================================
+# REFURB — sugestões de modernização
+# =============================================================================
+[tool.refurb]
+# Códigos ignorados: ajuste conforme o estilo do projeto
+ignore = [
+    "FURB105",  # print() sem parênteses vazios — inofensivo, pode ignorar
+    "FURB126",  # return implícito — às vezes reduz clareza em funções longas
+]
+
+# =============================================================================
+# PYTEST — testes (unit, integração, property-based, comportamentais)
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "--strict-markers",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+filterwarnings = [
+    # Avisos internos de bibliotecas de terceiros, fora do nosso controle.
+    "ignore:.*set_(bad|over|under) function will be deprecated.*:PendingDeprecationWarning:shap.*",
+    "ignore:.*default behavior of `how='horizontal'`.*:DeprecationWarning:pandera.*",
+    "ignore:.*`outer_coalesce`.*:DeprecationWarning:polars.*",
+    # `matthews_corrcoef` avisa em casos degenerados gerados pelo hypothesis.
+    "ignore:.*invalid value encountered in.*:RuntimeWarning",
+]
+markers = [
+    "smoke: testes rápidos rodados no pre-commit",
+    "integration: testes de pipeline ponta a ponta",
+    "ml: testes comportamentais / de regressão de métrica",
+    "slow: testes lentos (pulados por padrão localmente)",
+]
+
+# =============================================================================
+# COVERAGE — meta de cobertura ≥ 80%
+# =============================================================================
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "src/main.py",           # orquestração fina, coberta pelos testes de etapa
+    "*/__init__.py",
+    "src/data/collector.py", # exige rede e contas do twscrape
+    "src/labeling/llm.py",   # exige um servidor Ollama em execução
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+# =============================================================================
+# INTERROGATE — cobertura de docstrings
+# =============================================================================
+[tool.interrogate]
+fail-under = 80
+ignore-init-method = true
+ignore-magic = true
+exclude = ["tests", "notebooks", "docs"]
+
+# =============================================================================
+# COMMITIZEN — Conventional Commits + SemVer + CHANGELOG
+# =============================================================================
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"   # lê [project].version
+tag_format = "v$version"
+update_changelog_on_bump = true
+major_version_zero = true
