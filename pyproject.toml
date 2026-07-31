@@ -86,6 +86,15 @@ required-environments = [
 # numba < 0.57.1 (puxado por alguns pacotes) tem CVE-2024-28292.
 constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"]
 
+# diskcache (puxado por dvc -> dvc-data) tem PYSEC-2026-2447 / CVE-2025-69872
+# (deserialização insegura via pickle para quem tiver acesso de escrita ao
+# diretório de cache). Não há versão corrigida publicada até o momento — a
+# 5.6.3 é a mais recente no PyPI e ainda está na faixa afetada. É usado
+# apenas como cache local do próprio DVC (não expõe entrada de rede nem
+# recebe dados de terceiros), então o risco é aceito e ignorado
+# explicitamente no pip-audit (ver `make security` / `.github/workflows/ci.yml`)
+# até que o projeto publique uma correção.
+
 [[tool.uv.index]]
 name = "pytorch-cu129"
 url = "https://download.pytorch.org/whl/cu129"

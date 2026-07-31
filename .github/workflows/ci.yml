@@ -57,7 +57,7 @@ jobs:
           python-version: "3.12"
       - run: uv sync --dev
       - run: uv run bandit -r src -c pyproject.toml
-      - run: uv run pip-audit
+      - run: uv run pip-audit --ignore-vuln PYSEC-2026-2447
 
   quality:
     name: Dead code, complexity & docstrings
