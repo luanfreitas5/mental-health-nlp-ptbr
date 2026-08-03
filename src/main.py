@@ -32,6 +32,8 @@ from typing import Any
 # (`python src/main.py`), sem exigir instalação do pacote.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from warnings import filterwarnings
+
 from config.environment import log_environment, seed_everything
 from config.logging import configure_logging, get_logger
 from config.paths import get_paths
@@ -44,6 +46,9 @@ from pipelines.base import StageContext
 from pipelines.workflow import STAGES, describe_stages, run_pipeline
 from utils.files import write_json
 
+filterwarnings(
+    "ignore", category=UserWarning, module="torch"
+)  # PyTorch emite muitos avisos de usuário
 logger = get_logger(__name__)
 
 
@@ -201,6 +206,7 @@ def build_context(arguments: argparse.Namespace) -> StageContext:
     seed_everything(seed)
 
     tracker = None
+    arguments.no_tracking = True  # lembrar de apagar depois
     if not arguments.no_tracking:
         tracker = ExperimentTracker(config.general.experiment, root=paths.root)
 
