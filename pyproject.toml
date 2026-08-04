@@ -96,14 +96,14 @@ constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"]
 # até que o projeto publique uma correção.
 
 [[tool.uv.index]]
-name = "pytorch-cu129"
-url = "https://download.pytorch.org/whl/cu129"
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu129" }
-torchvision = { index = "pytorch-cu129" }
-torchaudio = { index = "pytorch-cu129" }
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+torchaudio = { index = "pytorch-cu124" }
 
 # --- Extras opcionais (ative por projeto: uv sync --extra name, etc.) -------
 [project.optional-dependencies]
@@ -115,6 +115,7 @@ llm = [
     "accelerate>=0.33",
     "datasets>=2.20",
     "ollama>=0.3",
+    "sentencepiece>=0.2.2",
 ]
 
 # Coleta no X/Twitter (etapa 1). Isolada porque só roda com aprovação

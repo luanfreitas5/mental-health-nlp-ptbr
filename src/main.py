@@ -206,7 +206,6 @@ def build_context(arguments: argparse.Namespace) -> StageContext:
     seed_everything(seed)
 
     tracker = None
-    arguments.no_tracking = True  # lembrar de apagar depois
     if not arguments.no_tracking:
         tracker = ExperimentTracker(config.general.experiment, root=paths.root)
 
