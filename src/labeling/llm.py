@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -371,6 +372,11 @@ class PsychologicalExtractor:
     def extract_frame(self, tweets: pl.DataFrame) -> pl.DataFrame:
         """Extrai o vetor psicológico de todos os usuários de um DataFrame.
 
+        Os lotes são montados sequencialmente (para preservar ``batch_index``
+        por usuário), mas as chamadas ao LLM rodam em paralelo — até
+        ``max_concurrency`` simultâneas — já que cada uma é uma chamada de
+        rede bloqueante ao servidor Ollama, e não trabalho de CPU.
+
         Parameters
         ----------
         tweets : pl.DataFrame
@@ -394,37 +400,61 @@ class PsychologicalExtractor:
         groups = tweets.sort([USER_ID, CREATED_AT]).partition_by(
             USER_ID, as_dict=True, maintain_order=True
         )
+
+        pending: list[dict[str, Any]] = []
+        for (user_id,), user_frame in groups.items():
+            texts = user_frame[TEXT_NORMALIZED].to_list()
+            timestamps = user_frame[CREATED_AT].to_list()
+
+            for batch_index, start in enumerate(range(0, len(texts), settings.batch_size_tweets)):
+                batch = texts[start : start + settings.batch_size_tweets]
+                window = timestamps[start : start + settings.batch_size_tweets]
+                pending.append(
+                    {
+                        "user_id": user_id,
+                        "batch_index": batch_index,
+                        "batch": batch,
+                        "window_start": min(window),
+                        "window_end": max(window),
+                    }
+                )
+
         records: list[dict[str, Any]] = []
 
         with build_progress() as progress:
-            task = progress.add_task("Extraindo vetor psicológico", total=len(groups))
-            for (user_id,), user_frame in groups.items():
-                texts = user_frame[TEXT_NORMALIZED].to_list()
-                timestamps = user_frame[CREATED_AT].to_list()
+            task = progress.add_task("Extraindo vetor psicológico", total=len(pending))
+            with ThreadPoolExecutor(max_workers=settings.max_concurrency) as executor:
+                futures = {
+                    executor.submit(self.extract_batch, item["batch"]): item for item in pending
+                }
+                try:
+                    for future in as_completed(futures):
+                        item = futures[future]
+                        vector = future.result()
+                        progress.advance(task)
+                        if vector is None:
+                            continue
 
-                for batch_index, start in enumerate(
-                    range(0, len(texts), settings.batch_size_tweets)
-                ):
-                    batch = texts[start : start + settings.batch_size_tweets]
-                    window = timestamps[start : start + settings.batch_size_tweets]
-                    vector = self.extract_batch(batch)
-                    if vector is None:
-                        continue
+                        records.append(
+                            {
+                                "user_id": item["user_id"],
+                                "batch_index": item["batch_index"],
+                                "n_tweets": len(item["batch"]),
+                                "window_start": item["window_start"],
+                                "window_end": item["window_end"],
+                                **vector.model_dump(),
+                                "model": settings.model,
+                                "prompt_version": self.config.prompts.version,
+                            }
+                        )
+                except BaseException:
+                    # Interrompe lotes ainda não iniciados (ex.: LLMUnavailableError);
+                    # os que já estão em execução terminam antes do 'with' fechar.
+                    for other in futures:
+                        other.cancel()
+                    raise
 
-                    records.append(
-                        {
-                            "user_id": user_id,
-                            "batch_index": batch_index,
-                            "n_tweets": len(batch),
-                            "window_start": min(window),
-                            "window_end": max(window),
-                            **vector.model_dump(),
-                            "model": settings.model,
-                            "prompt_version": self.config.prompts.version,
-                        }
-                    )
-
-                progress.advance(task)
+        records.sort(key=lambda record: (record["user_id"], record["batch_index"]))
 
         logger.info(
             "Vetor psicológico extraído: %d lotes de %d usuários.", len(records), len(groups)
