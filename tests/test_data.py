@@ -11,7 +11,7 @@ import pytest
 from config.settings import CrossValidationSection, SplitSection
 from data.catalog import build_catalog, compare_manifest, write_dataset_manifest
 from data.queries import build_query_string, summarize_queries
-from data.reader import count_users, list_collected_users, read_parquet
+from data.reader import count_users, list_collected_users, read_parquet, read_user_histories
 from data.splitter import assign_folds, build_split_table, create_splits, filter_split
 from data.writer import append_parquet, write_parquet, write_partitioned
 from exceptions.data import DatasetNotFoundError, InsufficientDataError
@@ -229,6 +229,39 @@ class TestEscritaELeitura:
 
         with pytest.raises(ValueError, match="incompatíveis"):
             append_parquet(pl.DataFrame({"b": [2]}), target)
+
+    def test_leitura_de_historicos_remove_tweet_id_duplicado_entre_arquivos(
+        self, tmp_path: Path
+    ) -> None:
+        """Uma conta exportada duas vezes sob screen_names diferentes não deve
+        duplicar tweets ao consolidar os históricos."""
+        tweet = {
+            "user_id": "u_mesma_conta",
+            "tweet_id": "u_tweet_repetido",
+            "text": "oi",
+            "created_at": None,
+        }
+        write_parquet(pl.DataFrame([tweet]), tmp_path / "handle_antigo.parquet")
+        write_parquet(pl.DataFrame([tweet]), tmp_path / "handle_novo.parquet")
+
+        combined = read_user_histories(tmp_path)
+
+        assert combined.height == 1
+
+    def test_leitura_de_historicos_preserva_tweets_distintos(self, tmp_path: Path) -> None:
+        """Usuários diferentes com tweets distintos não são afetados pelo dedupe."""
+        write_parquet(
+            pl.DataFrame([{"user_id": "u_a", "tweet_id": "u_t1", "text": "a", "created_at": None}]),
+            tmp_path / "usuario_a.parquet",
+        )
+        write_parquet(
+            pl.DataFrame([{"user_id": "u_b", "tweet_id": "u_t2", "text": "b", "created_at": None}]),
+            tmp_path / "usuario_b.parquet",
+        )
+
+        combined = read_user_histories(tmp_path)
+
+        assert combined.height == 2
 
 
 class TestCatalogo:

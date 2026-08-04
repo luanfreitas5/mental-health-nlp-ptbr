@@ -140,6 +140,21 @@ def read_user_histories(
     frames = [pl.read_parquet(file) for file in files]
     combined = pl.concat(frames, how="vertical_relaxed")
 
+    before = combined.height
+    combined = combined.unique(subset=["tweet_id"], keep="first", maintain_order=True)
+    removed = before - combined.height
+    if removed:
+        # Uma mesma conta pode ter sido exportada duas vezes sob screen_names
+        # diferentes (ex.: troca de @) — cada exportação vira um arquivo
+        # próprio, mas os tweets pseudonimizados colidem no `tweet_id`. Sem
+        # esse dedupe, `RawTweetSchema` rejeitaria a entrada inteira do
+        # preprocess por violação de unicidade.
+        logger.warning(
+            "Removidos %d tweets duplicados entre arquivos de histórico "
+            "(mesmo tweet_id em usuários/arquivos diferentes).",
+            removed,
+        )
+
     logger.info("Lidos %d históricos (%d tweets no total).", len(files), combined.height)
     return combined.sort(["user_id", "created_at"])
 
