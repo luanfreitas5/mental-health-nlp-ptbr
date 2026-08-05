@@ -75,7 +75,11 @@ def build_estimator(estimator: str, params: dict[str, Any], n_classes: int) -> B
             raise MissingDependencyError(
                 "xgboost não está instalado. Rode 'uv sync --dev'."
             ) from error
-        return XGBClassifier(num_class=n_classes, **params)
+        # O XGBoost detecta objetivo binário sozinho quando há só 2 classes;
+        # forçar `num_class` nesse caso produz um buffer de predição
+        # multiclasse incompatível com o objetivo `binary:logistic`.
+        xgboost_params = dict(params) | ({"num_class": n_classes} if n_classes > 2 else {})
+        return XGBClassifier(**xgboost_params)
 
     if estimator == "lightgbm":
         try:
@@ -124,6 +128,9 @@ class TabularClassifier(BaseUserClassifier):
     estimator_name: str = "xgboost"
     pipeline_: Pipeline | None = field(default=None, init=False, repr=False)
     feature_names_: list[str] = field(default_factory=list, init=False, repr=False)
+    present_classes_: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=int), init=False, repr=False
+    )
 
     def _build_pipeline(self, n_classes: int) -> Pipeline:
         """Monta o ``Pipeline`` de escalonamento + estimador."""
@@ -161,9 +168,18 @@ class TabularClassifier(BaseUserClassifier):
         self.validate_dataset(dataset)
         assert dataset.labels is not None
 
+        # Um fold pequeno pode, por acaso, não conter nenhum usuário de uma
+        # classe (ex.: 'depressao' ausente no treino de um fold específico).
+        # O XGBoost exige rótulos contíguos a partir de 0 — sem esse
+        # reindexamento local, `unique(y)` como [0, 2] quebra o fit(). As
+        # probabilidades são realocadas para o espaço global de classes em
+        # predict_proba().
         self.feature_names_ = list(dataset.feature_names)
-        self.pipeline_ = self._build_pipeline(n_classes=len(self.classes))
-        self.pipeline_.fit(dataset.features, dataset.labels)
+        self.present_classes_ = np.unique(dataset.labels)
+        encoded_labels = np.searchsorted(self.present_classes_, dataset.labels)
+
+        self.pipeline_ = self._build_pipeline(n_classes=len(self.present_classes_))
+        self.pipeline_.fit(dataset.features, encoded_labels)
         self.is_fitted = True
 
         logger.info(
@@ -195,8 +211,12 @@ class TabularClassifier(BaseUserClassifier):
         self.check_fitted()
         assert self.pipeline_ is not None
 
-        probabilities = self.pipeline_.predict_proba(dataset.features)
-        return np.asarray(probabilities, dtype=np.float64)
+        local_probabilities = np.asarray(
+            self.pipeline_.predict_proba(dataset.features), dtype=np.float64
+        )
+        probabilities = np.zeros((local_probabilities.shape[0], len(self.classes)))
+        probabilities[:, self.present_classes_] = local_probabilities
+        return probabilities
 
     def feature_importances(self) -> dict[str, float] | None:
         """Retorna a importância dos atributos, quando o estimador a expõe.

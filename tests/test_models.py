@@ -153,6 +153,38 @@ class TestClassificadorTabular:
         with pytest.raises(ValueError, match="rótulos"):
             model.fit(sem_rotulo)
 
+    def test_treina_com_classe_ausente_no_fold(self) -> None:
+        """Um fold sem nenhum usuário de uma classe não deve quebrar o XGBoost.
+
+        Reproduz o cenário em que a partição de treino de um fold, por
+        composição dos dados, fica sem nenhum representante de uma classe
+        intermediária (ex.: 'depressao'). Sem o reindexamento local dos
+        rótulos, `unique(y) = [0, 2]` faz o XGBoost levantar
+        ``ValueError: Invalid classes inferred from unique values of `y``.
+        """
+        rng = np.random.default_rng(42)
+        features = rng.normal(size=(20, 4))
+        # Apenas as classes 0 (controle) e 2 (ideacao_suicida) presentes;
+        # a classe 1 (depressao) está totalmente ausente deste treino.
+        labels = np.array([0] * 10 + [2] * 10)
+        train = UserDataset(
+            user_ids=[f"u{i}" for i in range(20)],
+            features=features,
+            feature_names=[f"f{i}" for i in range(4)],
+            labels=labels,
+        )
+
+        model = TabularClassifier(
+            name="xgb", params={"n_estimators": 10, "random_state": 42}, estimator_name="xgboost"
+        )
+        model.fit(train)
+        proba = model.predict_proba(train)
+
+        assert proba.shape == (len(train), len(CLASS_ORDER))
+        assert np.allclose(proba.sum(axis=1), 1.0)
+        # A classe nunca vista no treino não pode receber probabilidade.
+        assert np.allclose(proba[:, 1], 0.0)
+
     def test_descricao_para_rastreamento(self) -> None:
         """A descrição alimenta o MLflow e o model card."""
         model = TabularClassifier(name="xgb", params={"max_depth": 6}, estimator_name="xgboost")
