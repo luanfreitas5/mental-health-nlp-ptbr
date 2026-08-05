@@ -153,7 +153,17 @@ class TestClassificadorTabular:
         with pytest.raises(ValueError, match="rótulos"):
             model.fit(sem_rotulo)
 
-    def test_treina_com_classe_ausente_no_fold(self) -> None:
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"n_estimators": 10, "random_state": 42}, id="objetivo_padrao"),
+            pytest.param(
+                {"n_estimators": 10, "random_state": 42, "objective": "multi:softprob"},
+                id="objetivo_multiclasse_fixo_no_config",
+            ),
+        ],
+    )
+    def test_treina_com_classe_ausente_no_fold(self, params: dict[str, object]) -> None:
         """Um fold sem nenhum usuário de uma classe não deve quebrar o XGBoost.
 
         Reproduz o cenário em que a partição de treino de um fold, por
@@ -161,6 +171,11 @@ class TestClassificadorTabular:
         intermediária (ex.: 'depressao'). Sem o reindexamento local dos
         rótulos, `unique(y) = [0, 2]` faz o XGBoost levantar
         ``ValueError: Invalid classes inferred from unique values of `y``.
+
+        O segundo caso (``objetivo_multiclasse_fixo_no_config``) reproduz
+        ``configs/model_params.yaml``, que fixa ``objective: multi:softprob``
+        para comparabilidade entre folds — sem `num_class` explícito nesse
+        caso, o booster recebe `num_class=0` e falha.
         """
         rng = np.random.default_rng(42)
         features = rng.normal(size=(20, 4))
@@ -174,9 +189,7 @@ class TestClassificadorTabular:
             labels=labels,
         )
 
-        model = TabularClassifier(
-            name="xgb", params={"n_estimators": 10, "random_state": 42}, estimator_name="xgboost"
-        )
+        model = TabularClassifier(name="xgb", params=params, estimator_name="xgboost")
         model.fit(train)
         proba = model.predict_proba(train)
 

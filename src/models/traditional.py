@@ -75,10 +75,20 @@ def build_estimator(estimator: str, params: dict[str, Any], n_classes: int) -> B
             raise MissingDependencyError(
                 "xgboost não está instalado. Rode 'uv sync --dev'."
             ) from error
-        # O XGBoost detecta objetivo binário sozinho quando há só 2 classes;
-        # forçar `num_class` nesse caso produz um buffer de predição
-        # multiclasse incompatível com o objetivo `binary:logistic`.
-        xgboost_params = dict(params) | ({"num_class": n_classes} if n_classes > 2 else {})
+        # O XGBoost detecta objetivo binário sozinho quando há só 2 classes e
+        # nenhum objetivo é forçado; nesse caso, impor `num_class` produz um
+        # buffer de predição multiclasse incompatível com `binary:logistic`.
+        # Mas se `objective` já pede multiclasse explicitamente (caso do
+        # `configs/model_params.yaml`, fixado para comparabilidade entre
+        # folds), `num_class` é obrigatório mesmo com 2 classes ou menos —
+        # omiti-lo faz o booster receber `num_class=0` e falhar.
+        xgboost_params = dict(params)
+        multiclass_objective = xgboost_params.get("objective") in {
+            "multi:softmax",
+            "multi:softprob",
+        }
+        if n_classes > 2 or multiclass_objective:
+            xgboost_params["num_class"] = n_classes
         return XGBClassifier(**xgboost_params)
 
     if estimator == "lightgbm":

@@ -90,8 +90,11 @@ class HybridClassifier(BaseUserClassifier):
     pipeline_: Pipeline | None = field(default=None, init=False, repr=False)
     feature_names_: list[str] = field(default_factory=list, init=False, repr=False)
     n_semantic_: int = field(default=0, init=False, repr=False)
+    present_classes_: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=int), init=False, repr=False
+    )
 
-    def _build_pipeline(self, feature_names: list[str]) -> Pipeline:
+    def _build_pipeline(self, feature_names: list[str], n_classes: int) -> Pipeline:
         """Monta o pré-processador por blocos seguido da cabeça de classificação."""
         semantic, structured = split_feature_blocks(feature_names)
         self.n_semantic_ = len(semantic)
@@ -125,9 +128,7 @@ class HybridClassifier(BaseUserClassifier):
             logger.info("Bloco estruturado: %d atributos mantidos.", len(structured))
 
         head_params = {key: value for key, value in self.params.items() if key != "head"}
-        head = build_estimator(
-            str(self.params.get("head", "xgboost")), head_params, len(self.classes)
-        )
+        head = build_estimator(str(self.params.get("head", "xgboost")), head_params, n_classes)
 
         return Pipeline(
             [
@@ -156,9 +157,15 @@ class HybridClassifier(BaseUserClassifier):
         self.validate_dataset(dataset)
         assert dataset.labels is not None
 
+        # Mesmo racional do TabularClassifier: um fold pode não conter
+        # nenhum usuário de uma classe, e o XGBoost exige rótulos contíguos
+        # a partir de 0. Ver models.traditional.TabularClassifier.fit.
         self.feature_names_ = list(dataset.feature_names)
-        self.pipeline_ = self._build_pipeline(self.feature_names_)
-        self.pipeline_.fit(dataset.features, dataset.labels)
+        self.present_classes_ = np.unique(dataset.labels)
+        encoded_labels = np.searchsorted(self.present_classes_, dataset.labels)
+
+        self.pipeline_ = self._build_pipeline(self.feature_names_, len(self.present_classes_))
+        self.pipeline_.fit(dataset.features, encoded_labels)
         self.is_fitted = True
 
         logger.info(
@@ -192,7 +199,13 @@ class HybridClassifier(BaseUserClassifier):
         """
         self.check_fitted()
         assert self.pipeline_ is not None
-        return np.asarray(self.pipeline_.predict_proba(dataset.features), dtype=np.float64)
+
+        local_probabilities = np.asarray(
+            self.pipeline_.predict_proba(dataset.features), dtype=np.float64
+        )
+        probabilities = np.zeros((local_probabilities.shape[0], len(self.classes)))
+        probabilities[:, self.present_classes_] = local_probabilities
+        return probabilities
 
     def transformed_feature_names(self) -> list[str]:
         """Nomes das colunas após a transformação por blocos.
