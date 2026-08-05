@@ -14,6 +14,7 @@ entre publicações, e a ordem entre elas, desapareceria.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cache
 from typing import Any
 
 import numpy as np
@@ -89,6 +90,62 @@ def build_sequence_batch(
     return batch, mask
 
 
+@cache
+def _build_recurrent_classifier_class(torch: Any) -> type:
+    """Cria a classe do módulo recorrente uma única vez, em escopo de módulo.
+
+    O torch é opcional e importado sob demanda, então a classe não pode ser
+    declarada no topo do módulo. Só que uma classe aninhada dentro de uma
+    função ganha um ``__qualname__`` com ``<locals>``, que o ``pickle``
+    (usado por ``joblib.dump`` para persistir o modelo) não consegue
+    resolver de volta a um atributo do módulo. Por isso ela é construída uma
+    única vez — memoizada por ``functools.cache``, já que ``_import_torch()``
+    sempre devolve o mesmo objeto de módulo — e publicada em ``globals()``
+    sob o nome simples ``RecurrentClassifier``, tornando-a "pickleável".
+    """
+    nn = torch.nn
+
+    class RecurrentClassifier(nn.Module):
+        """LSTM (opcionalmente bidirecional) sobre sequências de embeddings."""
+
+        def __init__(
+            self,
+            input_dim: int,
+            hidden_dim: int,
+            num_layers: int,
+            n_classes: int,
+            dropout: float,
+            *,
+            bidirectional: bool,
+        ) -> None:
+            super().__init__()
+            self.lstm = nn.LSTM(
+                input_size=input_dim,
+                hidden_size=hidden_dim,
+                num_layers=num_layers,
+                batch_first=True,
+                bidirectional=bidirectional,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+            self.dropout = nn.Dropout(dropout)
+            self.head = nn.Linear(hidden_dim * (2 if bidirectional else 1), n_classes)
+
+        def forward(self, inputs: Any, mask: Any) -> Any:
+            """Propaga o lote e devolve os logits por classe."""
+            output, _ = self.lstm(inputs)
+            # Pooling que respeita a máscara: incluir as posições de
+            # preenchimento faria a média depender do comprimento da
+            # sequência, e não do conteúdo.
+            expanded = mask.unsqueeze(-1)
+            pooled = (output * expanded).sum(dim=1) / expanded.sum(dim=1).clamp(min=1e-9)
+            return self.head(self.dropout(pooled))
+
+    RecurrentClassifier.__module__ = __name__
+    RecurrentClassifier.__qualname__ = RecurrentClassifier.__name__
+    globals()[RecurrentClassifier.__name__] = RecurrentClassifier
+    return RecurrentClassifier
+
+
 class _RecurrentNetwork:
     """Fábrica da arquitetura recorrente (definida sob demanda, com o torch importado)."""
 
@@ -104,35 +161,15 @@ class _RecurrentNetwork:
     ) -> Any:
         """Constrói o módulo BiLSTM com *pooling* mascarado e cabeça linear."""
         torch = _import_torch()
-        nn = torch.nn
-
-        class RecurrentClassifier(nn.Module):
-            """LSTM (opcionalmente bidirecional) sobre sequências de embeddings."""
-
-            def __init__(self) -> None:
-                super().__init__()
-                self.lstm = nn.LSTM(
-                    input_size=input_dim,
-                    hidden_size=hidden_dim,
-                    num_layers=num_layers,
-                    batch_first=True,
-                    bidirectional=bidirectional,
-                    dropout=dropout if num_layers > 1 else 0.0,
-                )
-                self.dropout = nn.Dropout(dropout)
-                self.head = nn.Linear(hidden_dim * (2 if bidirectional else 1), n_classes)
-
-            def forward(self, inputs: Any, mask: Any) -> Any:
-                """Propaga o lote e devolve os logits por classe."""
-                output, _ = self.lstm(inputs)
-                # Pooling que respeita a máscara: incluir as posições de
-                # preenchimento faria a média depender do comprimento da
-                # sequência, e não do conteúdo.
-                expanded = mask.unsqueeze(-1)
-                pooled = (output * expanded).sum(dim=1) / expanded.sum(dim=1).clamp(min=1e-9)
-                return self.head(self.dropout(pooled))
-
-        return RecurrentClassifier()
+        classifier_class = _build_recurrent_classifier_class(torch)
+        return classifier_class(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            n_classes=n_classes,
+            dropout=dropout,
+            bidirectional=bidirectional,
+        )
 
 
 @dataclass
