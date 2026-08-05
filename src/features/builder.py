@@ -116,7 +116,13 @@ def handle_missing_values(
     if not feature_columns:
         return frame
 
-    result = frame
+    # Colunas float podem trazer NaN (ex.: tendências temporais sem histórico
+    # suficiente — ver features/temporal.py), que o Polars NÃO conta em
+    # null_count(). Normalizamos para null aqui para que a detecção e a
+    # imputação abaixo enxerguem os dois casos da mesma forma.
+    float_columns = [column for column in feature_columns if frame.schema[column].is_float()]
+    result = frame.with_columns([pl.col(column).fill_nan(None) for column in float_columns])
+
     with_nulls = [column for column in feature_columns if result[column].null_count() > 0]
 
     if config.aggregation.add_missing_indicators and with_nulls:
