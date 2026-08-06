@@ -75,6 +75,7 @@ class DataPaths(_PathModel):
     tweets_labeled: Path
     psychological_scores: Path
     embeddings: Path
+    user_features_raw: Path
     user_features: Path
     user_labels: Path
     splits: Path

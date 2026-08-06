@@ -21,7 +21,6 @@ logger = get_logger(__name__)
 _PRODUCER_STAGE: dict[str, str] = {
     "tweets_clean.parquet": "preprocess",
     "tweets_labeled.parquet": "label",
-    "psychological_scores.parquet": "psych",
     "user_features.parquet": "features",
     "user_labels.parquet": "label",
     "splits.parquet": "split",
@@ -235,12 +234,16 @@ def count_users(directory: Path) -> int:
 
 
 def list_collected_users(directory: Path) -> set[str]:
-    """Lista os usuários cujo histórico já foi coletado.
+    """Lista os usuários já processados num diretório particionado por usuário.
+
+    Usada originalmente para retomar a coleta, mas serve a qualquer etapa que
+    grava um ``.parquet`` por usuário (``preprocess``, ``label``, ``psych``) —
+    o nome do arquivo (sem extensão) é o próprio ``user_id``.
 
     Parameters
     ----------
     directory : Path
-        Diretório dos históricos (um arquivo por ``user_id``).
+        Diretório particionado por usuário (um arquivo por ``user_id``).
 
     Returns
     -------
@@ -253,3 +256,41 @@ def list_collected_users(directory: Path) -> set[str]:
     True
     """
     return {file.stem for file in list_files(Path(directory), "*.parquet")}
+
+
+def select_pending_users(
+    available: set[str],
+    already_processed: set[str],
+    limit: int | None = None,
+) -> list[str]:
+    """Calcula quais usuários processar nesta execução.
+
+    Centraliza a lógica de retomada usada por toda etapa que processa um
+    usuário por vez: ignora quem já tem resultado em disco e, se
+    ``--limit-users`` estiver definido, processa só os próximos ``limit``
+    pendentes — o que permite interromper e retomar sem reprocessar ninguém.
+
+    Parameters
+    ----------
+    available : set of str
+        Usuários disponíveis na entrada da etapa.
+    already_processed : set of str
+        Usuários que já têm resultado gravado (serão ignorados).
+    limit : int, optional
+        Número máximo de usuários pendentes a processar nesta execução;
+        ``None`` processa todos os pendentes.
+
+    Returns
+    -------
+    list of str
+        Usuários pendentes, em ordem determinística, já limitados.
+
+    Examples
+    --------
+    >>> select_pending_users({"u_a", "u_b", "u_c"}, {"u_a"}, limit=1)
+    ['u_b']
+    """
+    pending = sorted(available - already_processed)
+    if limit is not None:
+        pending = pending[:limit]
+    return pending

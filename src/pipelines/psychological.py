@@ -12,21 +12,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import polars as pl
+
 from config.logging import get_logger
-from data.reader import read_partitioned
-from data.writer import write_parquet
+from constants.columns import USER_ID
+from data.reader import list_collected_users, read_partitioned, select_pending_users
+from data.writer import write_user_partition
 from exceptions.model import LLMUnavailableError, MissingDependencyError
 from labeling.llm import PsychologicalExtractor
 from pipelines.base import PipelineStage, StageContext
 from schemas.tweets import PsychologicalScoreSchema
 from schemas.validation import validate_frame
 from utils.files import list_files
+from utils.progress import track
 
 logger = get_logger(__name__)
 
 
 class PsychologicalStage(PipelineStage):
-    """Extrai o vetor psicológico de cada usuário via LLM."""
+    """Extrai o vetor psicológico de cada usuário via LLM.
+
+    É a etapa mais lenta do pipeline (uma chamada ao LLM por lote de tweets),
+    então cada usuário é gravado em ``psychological_scores/`` imediatamente
+    após sua extração: uma interrupção não custa horas de inferência já
+    feita, e ``--limit-users`` permite processar em lotes controlados.
+    """
 
     name = "psych"
     description = "Extrai atributos psicológicos com LLM local (Ollama)"
@@ -65,34 +75,59 @@ class PsychologicalStage(PipelineStage):
         source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
         tweets = read_partitioned(source, stage="label" if labeled_available else "preprocess")
 
-        limit = context.option("limit_users")
-        if limit:
-            selected = tweets["user_id"].unique().sort().head(int(limit))
-            tweets = tweets.filter(tweets["user_id"].is_in(selected))
-            logger.info("Extração limitada a %d usuários (--limit-users).", int(limit))
+        already_processed = list_collected_users(paths.data.psychological_scores)
+        pending = select_pending_users(
+            set(tweets[USER_ID].unique().to_list()),
+            already_processed,
+            context.option("limit_users"),
+        )
+        logger.info(
+            "Extração psicológica: %d usuários já processados, %d pendentes nesta execução.",
+            len(already_processed),
+            len(pending),
+        )
 
-        try:
-            extractor = PsychologicalExtractor(config.llm)
-            scores = extractor.extract_frame(tweets)
-        except (LLMUnavailableError, MissingDependencyError) as error:
-            logger.warning(
-                "Extração psicológica pulada: %s. O grupo 'psychological' ficará ausente "
-                "da matriz de atributos.",
-                error,
+        if pending:
+            try:
+                extractor = PsychologicalExtractor(config.llm)
+                extractor.client.ensure_model(config.llm.psychological_features.model)
+            except (LLMUnavailableError, MissingDependencyError) as error:
+                logger.warning(
+                    "Extração psicológica pulada: %s. O grupo 'psychological' ficará ausente "
+                    "da matriz de atributos.",
+                    error,
+                )
+                return {"skipped": True, "reason": str(error)}
+
+            groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
+                USER_ID, as_dict=True, maintain_order=True
             )
-            return {"skipped": True, "reason": str(error)}
+            for user_id in track(pending, "Extraindo vetor psicológico"):
+                user_frame = groups.get((user_id,))
+                if user_frame is None or user_frame.is_empty():
+                    continue
 
-        if scores.is_empty():
+                scores = extractor.extract_frame(user_frame)
+                if scores.is_empty():
+                    logger.warning("Nenhum vetor psicológico válido para o usuário.")
+                    continue
+
+                validate_frame(
+                    scores, PsychologicalScoreSchema, context="saída da extração psicológica"
+                )
+                write_user_partition(scores, paths.data.psychological_scores, user_id)
+
+        processed_users = list_collected_users(paths.data.psychological_scores)
+        if not processed_users:
             logger.warning("Nenhum vetor psicológico válido foi produzido.")
             return {"skipped": True, "reason": "nenhuma resposta válida do LLM"}
 
-        validate_frame(scores, PsychologicalScoreSchema, context="saída da extração psicológica")
-        target = write_parquet(scores, paths.data.psychological_scores)
-
+        scores = read_partitioned(paths.data.psychological_scores)
         return {
             "n_lotes": scores.height,
-            "n_usuarios": scores["user_id"].n_unique(),
+            "n_usuarios": scores[USER_ID].n_unique(),
+            "usuarios_processados_nesta_execucao": len(pending),
             "modelo": config.llm.psychological_features.model,
             "versao_prompt": config.llm.prompts.version,
-            "written": str(target),
+            "written": str(paths.data.psychological_scores),
         }

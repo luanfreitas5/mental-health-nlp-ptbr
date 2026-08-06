@@ -145,6 +145,42 @@ def write_partitioned(
     return written
 
 
+def write_user_partition(frame: pl.DataFrame, directory: Path, user_id: str) -> Path:
+    """Grava o resultado de um único usuário, imediatamente após seu processamento.
+
+    É a contraparte, usuário a usuário, de :func:`write_partitioned`: em vez de
+    processar todos os usuários em memória e só então gravar o diretório
+    inteiro, cada etapa que itera por usuário chama esta função logo após
+    processar cada um. Se a execução for interrompida, os usuários já
+    gravados não precisam ser reprocessados na próxima chamada — basta
+    verificar quem já existe no diretório (ver :func:`list_collected_users` e
+    :func:`select_pending_users`).
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        Resultado de um único usuário (pode ter zero linhas, quando o
+        usuário foi processado mas não produziu saída — o arquivo ainda é
+        gravado, para que ele conte como "já processado" e não seja
+        reprocessado na próxima execução).
+    directory : Path
+        Diretório particionado por usuário.
+    user_id : str
+        Identificador pseudonimizado do usuário.
+
+    Returns
+    -------
+    Path
+        Caminho gravado (``<directory>/<user_id>.parquet``).
+
+    Examples
+    --------
+    >>> destino = Path("data/interim/x")
+    >>> write_user_partition(pl.DataFrame({"user_id": ["u_a"]}), destino, "u_a")  # doctest: +SKIP
+    """
+    return write_parquet(frame, Path(directory) / f"{user_id}.parquet", log_hash=False)
+
+
 def append_parquet(frame: pl.DataFrame, path: Path) -> Path:
     """Concatena um DataFrame a um Parquet existente.
 

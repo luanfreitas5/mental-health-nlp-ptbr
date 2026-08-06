@@ -91,6 +91,7 @@ def build_catalog(paths: ProjectPaths) -> dict[str, ArtifactStatus]:
         "tweets_labeled": (paths.data.tweets_labeled, "label"),
         "psychological_scores": (paths.data.psychological_scores, "psych"),
         "user_labels": (paths.data.user_labels, "label"),
+        "user_features_raw": (paths.data.user_features_raw, "features"),
         "user_features": (paths.data.user_features, "features"),
         "splits": (paths.data.splits, "split"),
     }

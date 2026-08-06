@@ -155,7 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit-users",
         type=int,
         default=None,
-        help="Limita o número de usuários processados (útil na extração por LLM).",
+        help=(
+            "Número máximo de usuários pendentes a processar nesta execução, nas etapas "
+            "que processam um usuário por vez (preprocess, label, psych, embed, features). "
+            "Usuários já processados em execuções anteriores são sempre ignorados; "
+            "sem este limite, todos os pendentes são processados."
+        ),
     )
     execution.add_argument(
         "--continue-on-error",

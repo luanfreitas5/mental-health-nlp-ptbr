@@ -152,42 +152,43 @@ def handle_missing_values(
     )
 
 
-def build_user_features(
+def build_user_features_raw(
     tweets: pl.DataFrame,
     config: FeaturesConfig,
     *,
     metadata: pl.DataFrame | None = None,
     psychological_scores: pl.DataFrame | None = None,
-    labels: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    """Monta a matriz completa de atributos por usuário.
+    """Monta as colunas de atributos por usuário, sem imputação global nem rótulos.
+
+    É a metade decomponível por usuário de :func:`build_user_features`: todos
+    os seis grupos e o filtro de ``min_tweets_per_user`` dependem apenas dos
+    dados do(s) usuário(s) recebidos em ``tweets`` — por isso esta função pode
+    ser chamada com um único usuário por vez, o que sustenta o processamento
+    incremental de ``pipelines.features.FeaturesStage``. A imputação por
+    mediana e a junção com os rótulos ficam em :func:`finalize_user_features`,
+    que precisa da população inteira e por isso roda uma única vez, no final.
 
     Parameters
     ----------
     tweets : pl.DataFrame
-        Tweets limpos e rotulados por sentimento.
+        Tweets limpos e rotulados por sentimento (de um ou mais usuários).
     config : FeaturesConfig
         Seção ``features`` de ``configs/features.yaml``.
     metadata : pl.DataFrame, optional
         Metadados públicos dos usuários (features de audiência).
     psychological_scores : pl.DataFrame, optional
         Vetores psicológicos extraídos pelo LLM.
-    labels : pl.DataFrame, optional
-        Rótulos por usuário; quando fornecidos, são unidos à matriz.
 
     Returns
     -------
     pl.DataFrame
-        Uma linha por usuário: perfil, atributos e (se disponível) rótulo.
-
-    Raises
-    ------
-    InsufficientDataError
-        Se nenhum usuário atingir ``aggregation.min_tweets_per_user``.
+        Uma linha por usuário que atingiu ``aggregation.min_tweets_per_user``
+        (pode ficar vazio, com o mesmo esquema de colunas, se nenhum atingir).
 
     Examples
     --------
-    >>> build_user_features(tweets, config.features, labels=rotulos)  # doctest: +SKIP
+    >>> build_user_features_raw(tweets, config.features)  # doctest: +SKIP
     """
     require_columns(tweets, [USER_ID, CREATED_AT], context="matriz de atributos")
 
@@ -236,17 +237,61 @@ def build_user_features(
     minimum = config.aggregation.min_tweets_per_user
     before = result.height
     result = result.filter(pl.col(N_TWEETS) >= minimum)
-    if result.is_empty():
-        raise InsufficientDataError(
-            f"Nenhum usuário atingiu o mínimo de {minimum} tweets "
-            f"(features.aggregation.min_tweets_per_user). Usuários avaliados: {before}."
-        )
     if before != result.height:
-        logger.info(
-            "%d usuários removidos por terem menos de %d tweets.", before - result.height, minimum
+        logger.debug(
+            "%d usuário(s) removido(s) por terem menos de %d tweets.",
+            before - result.height,
+            minimum,
         )
 
-    result = handle_missing_values(result, config)
+    return result.sort(USER_ID)
+
+
+def finalize_user_features(
+    raw: pl.DataFrame,
+    config: FeaturesConfig,
+    *,
+    labels: pl.DataFrame | None = None,
+) -> pl.DataFrame:
+    """Aplica a imputação global e une os rótulos à matriz de atributos acumulada.
+
+    É a metade **não** decomponível por usuário de :func:`build_user_features`:
+    a mediana usada na imputação (ver :func:`handle_missing_values`) precisa
+    da população inteira, não de um usuário isolado. Roda uma única vez, sobre
+    o acumulado de :func:`build_user_features_raw`.
+
+    Parameters
+    ----------
+    raw : pl.DataFrame
+        Saída acumulada de :func:`build_user_features_raw` (todos os usuários
+        já processados).
+    config : FeaturesConfig
+        Seção ``features`` de ``configs/features.yaml``.
+    labels : pl.DataFrame, optional
+        Rótulos por usuário; quando fornecidos, são unidos à matriz.
+
+    Returns
+    -------
+    pl.DataFrame
+        Uma linha por usuário: perfil, atributos e (se disponível) rótulo.
+
+    Raises
+    ------
+    InsufficientDataError
+        Se nenhum usuário atingir ``aggregation.min_tweets_per_user``.
+
+    Examples
+    --------
+    >>> finalize_user_features(bruto, config.features, labels=rotulos)  # doctest: +SKIP
+    """
+    if raw.is_empty():
+        raise InsufficientDataError(
+            "Nenhum usuário atingiu o mínimo de "
+            f"{config.aggregation.min_tweets_per_user} tweets "
+            "(features.aggregation.min_tweets_per_user)."
+        )
+
+    result = handle_missing_values(raw, config)
 
     if labels is not None:
         result = result.join(labels.select([USER_ID, USER_LABEL]), on=USER_ID, how="inner")
@@ -259,6 +304,54 @@ def build_user_features(
         len(list_feature_columns(result)),
     )
     return result.sort(USER_ID)
+
+
+def build_user_features(
+    tweets: pl.DataFrame,
+    config: FeaturesConfig,
+    *,
+    metadata: pl.DataFrame | None = None,
+    psychological_scores: pl.DataFrame | None = None,
+    labels: pl.DataFrame | None = None,
+) -> pl.DataFrame:
+    """Monta a matriz completa de atributos por usuário.
+
+    Fachada que encadeia :func:`build_user_features_raw` e
+    :func:`finalize_user_features` num único lote — use estas duas funções
+    diretamente para processar os usuários incrementalmente (ver
+    ``pipelines.features.FeaturesStage``).
+
+    Parameters
+    ----------
+    tweets : pl.DataFrame
+        Tweets limpos e rotulados por sentimento.
+    config : FeaturesConfig
+        Seção ``features`` de ``configs/features.yaml``.
+    metadata : pl.DataFrame, optional
+        Metadados públicos dos usuários (features de audiência).
+    psychological_scores : pl.DataFrame, optional
+        Vetores psicológicos extraídos pelo LLM.
+    labels : pl.DataFrame, optional
+        Rótulos por usuário; quando fornecidos, são unidos à matriz.
+
+    Returns
+    -------
+    pl.DataFrame
+        Uma linha por usuário: perfil, atributos e (se disponível) rótulo.
+
+    Raises
+    ------
+    InsufficientDataError
+        Se nenhum usuário atingir ``aggregation.min_tweets_per_user``.
+
+    Examples
+    --------
+    >>> build_user_features(tweets, config.features, labels=rotulos)  # doctest: +SKIP
+    """
+    raw = build_user_features_raw(
+        tweets, config, metadata=metadata, psychological_scores=psychological_scores
+    )
+    return finalize_user_features(raw, config, labels=labels)
 
 
 def select_groups(frame: pl.DataFrame, groups: list[str]) -> pl.DataFrame:

@@ -67,7 +67,9 @@ def apply_text_processing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
     )
 
 
-def run_preprocessing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
+def run_preprocessing(
+    frame: pl.DataFrame, config: Config, *, allow_empty: bool = False
+) -> pl.DataFrame:
     """Executa a etapa completa de pré-processamento.
 
     A ordem é intencional: os filtros baratos (deduplicação, comprimento)
@@ -80,6 +82,12 @@ def run_preprocessing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
         Tweets brutos, conforme :class:`schemas.tweets.RawTweetSchema`.
     config : Config
         Configuração completa do projeto.
+    allow_empty : bool, optional
+        Permite que a saída fique vazia sem levantar erro, by default
+        ``False``. Usado quando a etapa processa um usuário por vez: um único
+        usuário ser inteiramente filtrado (ex.: conta automatizada) é normal,
+        não uma falha do pipeline — só o caso agregado (todo o lote vazio)
+        deve derrubar a execução.
 
     Returns
     -------
@@ -91,7 +99,8 @@ def run_preprocessing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
     SchemaValidationError
         Se a entrada ou a saída violarem seus contratos.
     EmptyDatasetError
-        Se todos os tweets forem descartados pelos filtros.
+        Se todos os tweets forem descartados pelos filtros e ``allow_empty``
+        for ``False``.
 
     Examples
     --------
@@ -117,7 +126,8 @@ def run_preprocessing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
             min_active_days=config.collection.user_history.min_active_days,
         )
 
-    require_non_empty(result, context="saída do preprocess")
+    if not allow_empty:
+        require_non_empty(result, context="saída do preprocess")
     validate_frame(result, CleanTweetSchema, context="saída do preprocess")
 
     logger.info(

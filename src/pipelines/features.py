@@ -9,22 +9,33 @@ import numpy as np
 import polars as pl
 
 from config.logging import get_logger
+from constants.columns import USER_ID
 from data.catalog import write_dataset_manifest
-from data.reader import read_parquet, read_partitioned
-from data.writer import write_parquet
-from features.builder import build_user_features
+from data.reader import list_collected_users, read_parquet, read_partitioned, select_pending_users
+from data.writer import write_parquet, write_user_partition
+from exceptions.data import InsufficientDataError
+from features.builder import build_user_features_raw, finalize_user_features
 from features.semantic import aggregate_embeddings
 from pipelines.base import PipelineStage, StageContext
 from schemas.features import list_feature_columns, validate_feature_matrix
-from utils.files import write_json
+from utils.files import list_files, write_json
 from utils.hashing import hash_dataframe
+from utils.progress import track
 from utils.validation import summarize_missing
 
 logger = get_logger(__name__)
 
 
 class FeaturesStage(PipelineStage):
-    """Agrega tweets em uma linha por usuário, com todos os grupos de atributos."""
+    """Agrega tweets em uma linha por usuário, com todos os grupos de atributos.
+
+    A construção dos seis grupos processa um usuário por vez e grava
+    ``user_features_raw/`` imediatamente após cada um (retomável, limitável
+    por ``--limit-users``). A imputação de valores ausentes por mediana e a
+    junção com os rótulos rodam uma única vez, no final, sobre o acumulado —
+    dependem da população inteira, não de um usuário isolado (ver
+    :func:`features.builder.finalize_user_features`).
+    """
 
     name = "features"
     description = "Constrói a matriz de atributos por usuário (6 grupos)"
@@ -82,8 +93,8 @@ class FeaturesStage(PipelineStage):
             read_parquet(paths.data.user_metadata) if paths.data.user_metadata.is_file() else None
         )
         scores = (
-            read_parquet(paths.data.psychological_scores)
-            if paths.data.psychological_scores.is_file()
+            read_partitioned(paths.data.psychological_scores)
+            if list_files(paths.data.psychological_scores, "*.parquet")
             else None
         )
         if scores is None:
@@ -92,13 +103,56 @@ class FeaturesStage(PipelineStage):
                 "Execute a etapa 'psych' para incluí-lo."
             )
 
-        features = build_user_features(
-            tweets,
-            config.features,
-            metadata=metadata,
-            psychological_scores=scores,
-            labels=labels,
+        already_processed = list_collected_users(paths.data.user_features_raw)
+        pending = select_pending_users(
+            set(tweets[USER_ID].unique().to_list()),
+            already_processed,
+            context.option("limit_users"),
         )
+        logger.info(
+            "Matriz de atributos: %d usuários já processados, %d pendentes nesta execução.",
+            len(already_processed),
+            len(pending),
+        )
+
+        if pending:
+            tweet_groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
+                USER_ID, as_dict=True, maintain_order=True
+            )
+            metadata_groups = (
+                metadata.partition_by(USER_ID, as_dict=True, maintain_order=True)
+                if metadata is not None
+                else {}
+            )
+            scores_groups = (
+                scores.partition_by(USER_ID, as_dict=True, maintain_order=True)
+                if scores is not None
+                else {}
+            )
+
+            for user_id in track(pending, "Construindo atributos por usuário"):
+                user_tweets = tweet_groups.get((user_id,))
+                if user_tweets is None or user_tweets.is_empty():
+                    continue
+
+                raw_row = build_user_features_raw(
+                    user_tweets,
+                    config.features,
+                    metadata=metadata_groups.get((user_id,)),
+                    psychological_scores=scores_groups.get((user_id,)),
+                )
+                write_user_partition(raw_row, paths.data.user_features_raw, user_id)
+
+        processed_users = list_collected_users(paths.data.user_features_raw)
+        if not processed_users:
+            raise InsufficientDataError(
+                "Nenhum usuário foi processado ainda em "
+                f"'{paths.data.user_features_raw}'. Execute a etapa 'features' novamente "
+                "(sem --limit-users, ou com um limite maior)."
+            )
+
+        raw = read_partitioned(paths.data.user_features_raw)
+        features = finalize_user_features(raw, config.features, labels=labels)
 
         # Os embeddings são unidos aqui (e não dentro do builder) porque vêm de
         # um artefato separado, produzido pela etapa `embed`.
