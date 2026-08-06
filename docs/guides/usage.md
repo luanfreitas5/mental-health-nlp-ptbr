@@ -31,8 +31,8 @@ flowchart TD
 | # | Etapa | Comando | Produz |
 |---|---|---|---|
 | 1 | `collect` | `make collect` | `data/raw/user_histories/*.parquet` |
-| 2 | `preprocess` | `make preprocess` | `data/interim/tweets_clean.parquet` |
-| 3 | `label` | `make label` | `tweets_labeled.parquet`, `user_labels.parquet` |
+| 2 | `preprocess` | `make preprocess` | `data/interim/tweets_clean/*.parquet` |
+| 3 | `label` | `make label` | `tweets_labeled/*.parquet`, `user_labels.parquet` |
 | 4 | `psych` | `make psych` | `psychological_scores.parquet` |
 | 5 | `embed` | `make embed` | `data/interim/embeddings/*.npy` |
 | 6 | `features` | `make features` | `data/processed/user_features.parquet` |

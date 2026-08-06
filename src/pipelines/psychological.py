@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from config.logging import get_logger
-from data.reader import read_parquet
+from data.reader import read_partitioned
 from data.writer import write_parquet
 from exceptions.model import LLMUnavailableError, MissingDependencyError
 from labeling.llm import PsychologicalExtractor
 from pipelines.base import PipelineStage, StageContext
 from schemas.tweets import PsychologicalScoreSchema
 from schemas.validation import validate_frame
+from utils.files import list_files
 
 logger = get_logger(__name__)
 
@@ -60,12 +61,9 @@ class PsychologicalStage(PipelineStage):
             return {"skipped": True, "reason": "desativada na configuração"}
 
         # Prefere os tweets já rotulados (têm sentimento), mas funciona sem eles.
-        source = (
-            paths.data.tweets_labeled
-            if paths.data.tweets_labeled.is_file()
-            else paths.data.tweets_clean
-        )
-        tweets = read_parquet(source)
+        labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
+        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
+        tweets = read_partitioned(source, stage="label" if labeled_available else "preprocess")
 
         limit = context.option("limit_users")
         if limit:

@@ -14,11 +14,11 @@ import numpy as np
 import polars as pl
 
 from config.logging import get_logger
-from data.reader import read_parquet
+from data.reader import read_parquet, read_partitioned
 from pipelines.base import PipelineStage, StageContext
 from reports_templates.datasheet import build_datasheet
 from reports_templates.model_card import build_model_card
-from utils.files import read_json, write_text
+from utils.files import list_files, read_json, write_text
 from visualization.distributions import (
     plot_class_distribution,
     plot_ngrams,
@@ -94,10 +94,10 @@ class ReportingStage(PipelineStage):
             plot_embedding_projection(features), "projecao_embeddings", context
         )
 
-        if not paths.data.tweets_labeled.is_file():
+        if not list_files(paths.data.tweets_labeled, "*.parquet"):
             return figures
 
-        tweets = read_parquet(paths.data.tweets_labeled)
+        tweets = read_partitioned(paths.data.tweets_labeled, stage="label")
         labels = read_parquet(paths.data.user_labels)
 
         figures["frequencia_palavras"] = self._save(

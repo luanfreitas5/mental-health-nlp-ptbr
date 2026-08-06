@@ -33,7 +33,7 @@ stages:
       - configs/lexicons/stopwords_ptbr.txt
       - data/raw/user_histories
     outs:
-      - data/interim/tweets_clean.parquet
+      - data/interim/tweets_clean
 
   label:
     cmd: python src/main.py --stage label
@@ -44,9 +44,9 @@ stages:
       - src/labeling/validation.py
       - configs/labeling.yaml
       - configs/lexicons
-      - data/interim/tweets_clean.parquet
+      - data/interim/tweets_clean
     outs:
-      - data/interim/tweets_labeled.parquet
+      - data/interim/tweets_labeled
       - data/processed/user_labels.parquet
     metrics:
       - reports/metrics/labeling_quality.json:
@@ -58,7 +58,7 @@ stages:
       - src/labeling/llm.py
       - src/labeling/prompt.py
       - configs/llm.yaml
-      - data/interim/tweets_clean.parquet
+      - data/interim/tweets_clean
     outs:
       - data/interim/psychological_scores.parquet
 
@@ -67,7 +67,7 @@ stages:
     deps:
       - src/features/semantic.py
       - configs/features.yaml
-      - data/interim/tweets_clean.parquet
+      - data/interim/tweets_clean
     outs:
       - data/interim/embeddings
 
@@ -76,7 +76,7 @@ stages:
     deps:
       - src/features
       - configs/features.yaml
-      - data/interim/tweets_labeled.parquet
+      - data/interim/tweets_labeled
       - data/interim/embeddings
       - data/processed/user_labels.parquet
     outs:

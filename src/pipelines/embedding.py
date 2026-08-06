@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from config.logging import get_logger
-from data.reader import read_parquet
+from data.reader import read_partitioned
 from exceptions.model import MissingDependencyError, ModelError
 from features.semantic import EmbeddingEncoder, save_embeddings
 from pipelines.base import PipelineStage, StageContext
+from utils.files import list_files
 
 logger = get_logger(__name__)
 
@@ -54,12 +55,9 @@ class EmbeddingStage(PipelineStage):
             logger.info("Geração de embeddings desativada em configs/features.yaml.")
             return {"skipped": True, "reason": "desativada na configuração"}
 
-        source = (
-            paths.data.tweets_labeled
-            if paths.data.tweets_labeled.is_file()
-            else paths.data.tweets_clean
-        )
-        tweets = read_parquet(source).sort(["user_id", "created_at"])
+        labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
+        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
+        tweets = read_partitioned(source, stage="label" if labeled_available else "preprocess")
 
         # Por padrão só o encoder principal roda; os demais entram na extensão
         # exploratória e custam uma passada completa cada.

@@ -19,8 +19,10 @@ data:
   user_metadata: data/raw/users_metadata.parquet
 
   # Etapa 2/3 — processamento e rotulação
-  tweets_clean: data/interim/tweets_clean.parquet
-  tweets_labeled: data/interim/tweets_labeled.parquet
+  # Particionados por usuário (1 parquet cada) em vez de um único arquivo
+  # monolítico, para não ficarem grandes demais de carregar nas etapas seguintes.
+  tweets_clean: data/interim/tweets_clean
+  tweets_labeled: data/interim/tweets_labeled
   psychological_scores: data/interim/psychological_scores.parquet
   embeddings: data/interim/embeddings                # <modelo>.npy + <modelo>_index.parquet
 

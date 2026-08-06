@@ -19,11 +19,12 @@ from config.logging import get_logger
 from config.settings import Config
 from constants.columns import SPLIT, TEXT_NORMALIZED, USER_ID, USER_LABEL
 from constants.labels import LABEL_TO_INDEX
-from data.reader import read_parquet
+from data.reader import read_parquet, read_partitioned
 from experiment.tracker import ExperimentTracker
 from models.base import BaseUserClassifier, UserDataset
 from models.persistence import save_model
 from schemas.features import list_feature_columns
+from utils.files import list_files
 from utils.hashing import hash_dataframe
 from utils.timing import log_duration
 
@@ -344,8 +345,8 @@ def load_training_inputs(config: Config, paths: Any) -> dict[str, Any]:
 
     texts: dict[str, list[str]] | None = None
     tweets_path = paths.data.tweets_labeled
-    if tweets_path.is_file():
-        texts = load_user_texts(read_parquet(tweets_path))
+    if list_files(tweets_path, "*.parquet"):
+        texts = load_user_texts(read_partitioned(tweets_path, stage="label"))
     else:
         logger.warning("Tweets rotulados ausentes: Transformers e LLM serão pulados.")
 

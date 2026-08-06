@@ -82,7 +82,7 @@ def build_estimator(estimator: str, params: dict[str, Any], n_classes: int) -> B
         # `configs/model_params.yaml`, fixado para comparabilidade entre
         # folds), `num_class` é obrigatório mesmo com 2 classes ou menos —
         # omiti-lo faz o booster receber `num_class=0` e falhar.
-        xgboost_params = dict(params)
+        xgboost_params = params.copy()
         multiclass_objective = xgboost_params.get("objective") in {
             "multi:softmax",
             "multi:softprob",

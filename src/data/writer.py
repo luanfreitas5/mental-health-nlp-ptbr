@@ -81,11 +81,15 @@ def write_partitioned(
     partition_column: str,
     *,
     compression: str = PARQUET_COMPRESSION,
+    clear: bool = False,
 ) -> list[Path]:
     """Grava um Parquet por valor distinto de uma coluna.
 
     Usado na coleta: um arquivo por usuário permite retomar uma coleta
-    interrompida sem reprocessar quem já foi baixado.
+    interrompida sem reprocessar quem já foi baixado. Também usado para
+    persistir artefatos grandes (ex.: ``tweets_clean``, ``tweets_labeled``)
+    em vários arquivos menores, em vez de um único Parquet monolítico caro
+    de carregar por inteiro nas etapas seguintes.
 
     Parameters
     ----------
@@ -97,6 +101,13 @@ def write_partitioned(
         Coluna que define as partições (normalmente ``user_id``).
     compression : str, optional
         Codec de compressão, by default ``"zstd"``.
+    clear : bool, optional
+        Remove os ``.parquet`` já existentes no diretório antes de escrever,
+        by default False. Necessário quando a etapa reescreve o artefato do
+        zero a cada execução (ex.: preprocess, label) — sem isso, um usuário
+        removido nesta execução deixaria seu arquivo antigo para trás, e a
+        etapa seguinte o leria como se ainda fizesse parte do dataset. Na
+        coleta (retomável), o padrão ``False`` é o que preserva o progresso.
 
     Returns
     -------
@@ -118,6 +129,9 @@ def write_partitioned(
         )
 
     target_dir = Path(directory)
+    if clear and target_dir.is_dir():
+        for stale in target_dir.glob("*.parquet"):
+            stale.unlink()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []

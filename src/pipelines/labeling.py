@@ -8,8 +8,8 @@ from typing import Any, cast
 import polars as pl
 
 from config.logging import get_logger
-from data.reader import read_parquet
-from data.writer import write_parquet
+from data.reader import read_partitioned
+from data.writer import write_parquet, write_partitioned
 from labeling.emotion import EmotionLabeler
 from labeling.sentiment import SentimentLabeler
 from labeling.validation import (
@@ -61,7 +61,7 @@ class LabelingStage(PipelineStage):
         config = context.config
         paths = context.paths
 
-        tweets = read_parquet(paths.data.tweets_clean)
+        tweets = read_partitioned(paths.data.tweets_clean, stage="preprocess")
 
         # --- Nível tweet: sentimento (e emoções finas, se ativas) ----------
         if config.labeling.sentiment.enabled:
@@ -84,7 +84,8 @@ class LabelingStage(PipelineStage):
                 # features emocionais, mas não invalida a etapa.
                 logger.warning("Rotulação de emoções falhou e será omitida: %s", error)
 
-        labeled_path = write_parquet(tweets, paths.data.tweets_labeled)
+        write_partitioned(tweets, paths.data.tweets_labeled, "user_id", clear=True)
+        labeled_path = paths.data.tweets_labeled
 
         # --- Nível usuário: supervisão fraca -------------------------------
         labels = assign_user_labels(tweets, config.labeling.user_labeling)

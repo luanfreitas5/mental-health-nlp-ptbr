@@ -11,7 +11,13 @@ import pytest
 from config.settings import CrossValidationSection, SplitSection
 from data.catalog import build_catalog, compare_manifest, write_dataset_manifest
 from data.queries import build_query_string, summarize_queries
-from data.reader import count_users, list_collected_users, read_parquet, read_user_histories
+from data.reader import (
+    count_users,
+    list_collected_users,
+    read_parquet,
+    read_partitioned,
+    read_user_histories,
+)
 from data.splitter import assign_folds, build_split_table, create_splits, filter_split
 from data.writer import append_parquet, write_parquet, write_partitioned
 from exceptions.data import DatasetNotFoundError, InsufficientDataError
@@ -214,6 +220,27 @@ class TestEscritaELeitura:
         with pytest.raises(KeyError, match="ausente"):
             write_partitioned(pl.DataFrame({"x": [1]}), tmp_path, "user_id")
 
+    def test_particionamento_com_clear_remove_arquivos_antigos(self, tmp_path: Path) -> None:
+        """``clear=True`` descarta usuários da execução anterior que sumiram nesta.
+
+        Sem isso, um usuário removido no reprocessamento (ex.: filtrado por uma
+        nova regra) deixaria seu arquivo antigo para trás, e a etapa seguinte o
+        leria como se ainda fizesse parte do dataset atual.
+        """
+        write_partitioned(pl.DataFrame({"user_id": ["u_antigo"], "x": [1]}), tmp_path, "user_id")
+        write_partitioned(
+            pl.DataFrame({"user_id": ["u_novo"], "x": [2]}), tmp_path, "user_id", clear=True
+        )
+
+        assert list_collected_users(tmp_path) == {"u_novo"}
+
+    def test_particionamento_sem_clear_preserva_arquivos_antigos(self, tmp_path: Path) -> None:
+        """Sem ``clear``, o padrão retomável da coleta continua funcionando."""
+        write_partitioned(pl.DataFrame({"user_id": ["u_a"], "x": [1]}), tmp_path, "user_id")
+        write_partitioned(pl.DataFrame({"user_id": ["u_b"], "x": [2]}), tmp_path, "user_id")
+
+        assert list_collected_users(tmp_path) == {"u_a", "u_b"}
+
     def test_concatenacao(self, tmp_path: Path) -> None:
         """Blocos compatíveis são concatenados ao arquivo existente."""
         target = tmp_path / "dados.parquet"
@@ -263,6 +290,22 @@ class TestEscritaELeitura:
 
         assert combined.height == 2
 
+    def test_leitura_particionada_concatena_e_ordena(self, tmp_path: Path) -> None:
+        """Os arquivos de um diretório particionado voltam concatenados e ordenados."""
+        write_partitioned(
+            pl.DataFrame({"user_id": ["u_b", "u_a"], "text": ["y", "x"]}), tmp_path, "user_id"
+        )
+
+        combined = read_partitioned(tmp_path)
+
+        assert combined.height == 2
+        assert combined["user_id"].to_list() == ["u_a", "u_b"]
+
+    def test_leitura_particionada_de_diretorio_vazio_indica_a_etapa(self, tmp_path: Path) -> None:
+        """Diretório ausente ou vazio falha com a mesma dica de etapa do reader único."""
+        with pytest.raises(DatasetNotFoundError, match="preprocess"):
+            read_partitioned(tmp_path / "tweets_clean", stage="preprocess")
+
 
 class TestCatalogo:
     """Testes do catálogo de artefatos e do manifesto."""
@@ -294,3 +337,22 @@ class TestCatalogo:
 
         changes = compare_manifest(get_paths())
         assert isinstance(changes, dict)
+
+    def test_artefato_particionado_conta_como_existente(self, tmp_path: Path) -> None:
+        """Um diretório com pelo menos um Parquet é reconhecido como artefato presente."""
+        from data.catalog import _artifact_exists, _artifact_size_mb
+
+        directory = tmp_path / "tweets_clean"
+        write_partitioned(pl.DataFrame({"user_id": ["u_a"], "x": [1]}), directory, "user_id")
+
+        assert _artifact_exists(directory)
+        assert _artifact_size_mb(directory) >= 0.0
+
+    def test_diretorio_vazio_nao_conta_como_existente(self, tmp_path: Path) -> None:
+        """Um diretório criado mas sem Parquet ainda não é um artefato produzido."""
+        from data.catalog import _artifact_exists
+
+        directory = tmp_path / "tweets_clean"
+        directory.mkdir()
+
+        assert not _artifact_exists(directory)

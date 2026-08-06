@@ -19,6 +19,7 @@ Três salvaguardas de engenharia merecem destaque:
 from __future__ import annotations
 
 import json
+import operator
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -454,7 +455,7 @@ class PsychologicalExtractor:
                         other.cancel()
                     raise
 
-        records.sort(key=lambda record: (record["user_id"], record["batch_index"]))
+        records.sort(key=operator.itemgetter("user_id", "batch_index"))
 
         logger.info(
             "Vetor psicológico extraído: %d lotes de %d usuários.", len(records), len(groups)

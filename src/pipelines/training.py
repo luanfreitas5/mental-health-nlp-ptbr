@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config.logging import get_logger
-from data.reader import read_parquet
+from data.reader import read_parquet, read_partitioned
 from models.factory import create_models
 from pipelines.base import PipelineStage, StageContext
 from training.cross_validation import cross_validate_all, extract_fold_scores
@@ -16,7 +16,7 @@ from training.trainer import (
     split_features,
     train_all,
 )
-from utils.files import write_json
+from utils.files import list_files, write_json
 
 logger = get_logger(__name__)
 
@@ -62,8 +62,8 @@ class TrainingStage(PipelineStage):
         train = split_features(features, splits, "train")
 
         texts = None
-        if paths.data.tweets_labeled.is_file():
-            texts = load_user_texts(read_parquet(paths.data.tweets_labeled))
+        if list_files(paths.data.tweets_labeled, "*.parquet"):
+            texts = load_user_texts(read_partitioned(paths.data.tweets_labeled, stage="label"))
 
         sequences = load_user_sequences(
             paths.data.embeddings, config.features.semantic.primary_model.split("/")[-1]

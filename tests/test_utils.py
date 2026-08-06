@@ -20,6 +20,7 @@ from utils.files import (
 from utils.hashing import (
     build_manifest,
     hash_dataframe,
+    hash_directory,
     hash_file,
     hash_payload,
     hash_text,
@@ -124,6 +125,51 @@ class TestHashing:
         entry = build_manifest({"dados": target})["dados"]
         assert "sha256" in entry
         assert entry["size_bytes"] > 0
+
+    def test_hash_directory_de_diretorio_inexistente(self, tmp_path: Path) -> None:
+        """Diretório ausente ou sem Parquet falha com FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            hash_directory(tmp_path / "inexistente")
+
+    def test_hash_directory_e_independente_da_ordem_de_listagem(self, tmp_path: Path) -> None:
+        """O hash combinado não depende da ordem em que os arquivos são criados."""
+        (tmp_path / "u_b.parquet").write_bytes(b"b")
+        (tmp_path / "u_a.parquet").write_bytes(b"a")
+
+        outro = tmp_path.parent / "outra_ordem"
+        outro.mkdir()
+        (outro / "u_a.parquet").write_bytes(b"a")
+        (outro / "u_b.parquet").write_bytes(b"b")
+
+        assert hash_directory(tmp_path) == hash_directory(outro)
+
+    def test_hash_directory_detecta_mudanca_de_conteudo(self, tmp_path: Path) -> None:
+        """Alterar o conteúdo de um arquivo muda o hash combinado."""
+        (tmp_path / "u_a.parquet").write_bytes(b"a")
+        antes = hash_directory(tmp_path)
+
+        (tmp_path / "u_a.parquet").write_bytes(b"outro conteudo")
+        assert hash_directory(tmp_path) != antes
+
+    def test_manifesto_trata_diretorio_particionado_como_artefato(self, tmp_path: Path) -> None:
+        """Artefatos particionados em vários arquivos recebem hash combinado e n_files."""
+        directory = tmp_path / "tweets_clean"
+        directory.mkdir()
+        (directory / "u_a.parquet").write_bytes(b"a")
+        (directory / "u_b.parquet").write_bytes(b"b")
+
+        entry = build_manifest({"tweets_clean": directory})["tweets_clean"]
+        assert "sha256" in entry
+        assert entry["n_files"] == 2
+        assert entry["size_bytes"] == 2
+
+    def test_manifesto_marca_diretorio_vazio_como_ausente(self, tmp_path: Path) -> None:
+        """Um diretório criado mas sem nenhum Parquet ainda é 'ausente' no manifesto."""
+        directory = tmp_path / "tweets_clean"
+        directory.mkdir()
+
+        entry = build_manifest({"tweets_clean": directory})["tweets_clean"]
+        assert entry["status"] == "ausente"
 
 
 class TestArquivos:

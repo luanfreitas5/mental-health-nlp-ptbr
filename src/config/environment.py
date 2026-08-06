@@ -155,7 +155,7 @@ def describe_environment() -> dict[str, Any]:
         info["cuda_available"] = torch.cuda.is_available()
         if torch.cuda.is_available():
             info["cuda_device"] = torch.cuda.get_device_name(0)
-            info["cuda_version"] = torch.version.cuda
+            info["cuda_version"] = torch.version.cuda  # pyright: ignore[reportAttributeAccessIssue]
     except ImportError:
         info["cuda_available"] = False
 

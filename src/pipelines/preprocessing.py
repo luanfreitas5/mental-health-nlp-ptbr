@@ -7,7 +7,7 @@ from typing import Any
 
 from config.logging import get_logger
 from data.reader import read_user_histories
-from data.writer import write_parquet
+from data.writer import write_partitioned
 from pipelines.base import PipelineStage, StageContext
 from preprocessing.pipeline import run_preprocessing
 
@@ -25,7 +25,7 @@ class PreprocessingStage(PipelineStage):
         return [context.paths.data.user_histories]
 
     def run(self, context: StageContext) -> dict[str, Any]:
-        """Executa o pré-processamento e grava ``tweets_clean.parquet``.
+        """Executa o pré-processamento e grava ``tweets_clean/`` particionado por usuário.
 
         Parameters
         ----------
@@ -47,7 +47,7 @@ class PreprocessingStage(PipelineStage):
         n_raw_tweets, n_raw_users = raw.height, raw["user_id"].n_unique()
 
         clean = run_preprocessing(raw, context.config)
-        target = write_parquet(clean, paths.data.tweets_clean)
+        written = write_partitioned(clean, paths.data.tweets_clean, "user_id", clear=True)
 
         return {
             "tweets_entrada": n_raw_tweets,
@@ -55,5 +55,6 @@ class PreprocessingStage(PipelineStage):
             "usuarios_entrada": n_raw_users,
             "usuarios_saida": clean["user_id"].n_unique(),
             "taxa_retencao": round(clean.height / max(n_raw_tweets, 1), 4),
-            "written": str(target),
+            "n_arquivos": len(written),
+            "written": str(paths.data.tweets_clean),
         }

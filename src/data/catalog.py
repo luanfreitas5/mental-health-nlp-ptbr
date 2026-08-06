@@ -25,6 +25,21 @@ from utils.hashing import build_manifest
 logger = get_logger(__name__)
 
 
+def _artifact_exists(path: Path) -> bool:
+    """Verifica se um artefato existe, seja arquivo único ou diretório particionado."""
+    if path.is_dir():
+        return any(path.glob("*.parquet"))
+    return path.is_file()
+
+
+def _artifact_size_mb(path: Path) -> float:
+    """Calcula o tamanho de um artefato em MB, somando os arquivos quando particionado."""
+    if path.is_dir():
+        total = sum(file.stat().st_size for file in path.glob("*.parquet"))
+        return round(total / (1024 * 1024), 2)
+    return round(path.stat().st_size / (1024 * 1024), 2)
+
+
 @dataclass(frozen=True)
 class ArtifactStatus:
     """Situação de um artefato de dados.
@@ -82,13 +97,13 @@ def build_catalog(paths: ProjectPaths) -> dict[str, ArtifactStatus]:
 
     catalog: dict[str, ArtifactStatus] = {}
     for name, (path, stage) in declared.items():
-        exists = path.is_file()
+        exists = _artifact_exists(path)
         catalog[name] = ArtifactStatus(
             name=name,
             path=path,
             exists=exists,
             stage=stage,
-            size_mb=round(path.stat().st_size / (1024 * 1024), 2) if exists else 0.0,
+            size_mb=_artifact_size_mb(path) if exists else 0.0,
         )
     return catalog
 

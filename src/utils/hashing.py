@@ -186,6 +186,48 @@ def hash_file(path: Path, chunk_size: int = _CHUNK_SIZE) -> str:
     return digest.hexdigest()
 
 
+def hash_directory(path: Path, chunk_size: int = _CHUNK_SIZE) -> str:
+    """Calcula um hash estável do conteúdo de um diretório particionado.
+
+    Combina o nome e o hash de cada arquivo ``.parquet``, em ordem
+    determinística por nome — necessário porque artefatos grandes (ex.:
+    ``tweets_clean``) são gravados em vários arquivos, um por usuário, em vez
+    de um único Parquet monolítico.
+
+    Parameters
+    ----------
+    path : Path
+        Diretório com um ou mais arquivos ``.parquet``.
+    chunk_size : int, optional
+        Tamanho do bloco de leitura em bytes, by default 1 MiB.
+
+    Returns
+    -------
+    str
+        Digest hexadecimal combinado do conteúdo do diretório.
+
+    Raises
+    ------
+    FileNotFoundError
+        Se o diretório não existir ou não contiver nenhum arquivo ``.parquet``.
+
+    Examples
+    --------
+    >>> hash_directory(Path("data/interim/tweets_clean")) != ""  # doctest: +SKIP
+    True
+    """
+    target = Path(path)
+    files = sorted(target.glob("*.parquet")) if target.is_dir() else []
+    if not files:
+        raise FileNotFoundError(f"Diretório vazio ou inexistente para hash: {target}")
+
+    digest = hashlib.sha256()
+    for file in files:
+        digest.update(file.name.encode())
+        digest.update(hash_file(file, chunk_size).encode())
+    return digest.hexdigest()
+
+
 def hash_dataframe(frame: pl.DataFrame) -> str:
     """Calcula um hash estável do conteúdo de um DataFrame.
 
@@ -229,8 +271,9 @@ def build_manifest(artifacts: dict[str, Path]) -> dict[str, Any]:
     Returns
     -------
     dict
-        Nome -> ``{"path", "sha256", "size_bytes"}``. Artefatos ausentes
-        recebem ``{"path", "status": "ausente"}``.
+        Nome -> ``{"path", "sha256", "size_bytes"}`` (mais ``"n_files"`` para
+        artefatos particionados em diretório). Artefatos ausentes recebem
+        ``{"path", "status": "ausente"}``.
 
     Examples
     --------
@@ -241,6 +284,18 @@ def build_manifest(artifacts: dict[str, Path]) -> dict[str, Any]:
     manifest: dict[str, Any] = {}
     for name, path in artifacts.items():
         target = Path(path)
+        if target.is_dir():
+            files = sorted(target.glob("*.parquet"))
+            if not files:
+                manifest[name] = {"path": str(target), "status": "ausente"}
+                continue
+            manifest[name] = {
+                "path": str(target),
+                "sha256": hash_directory(target),
+                "size_bytes": sum(file.stat().st_size for file in files),
+                "n_files": len(files),
+            }
+            continue
         if not target.is_file():
             manifest[name] = {"path": str(target), "status": "ausente"}
             continue

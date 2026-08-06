@@ -159,6 +159,58 @@ def read_user_histories(
     return combined.sort(["user_id", "created_at"])
 
 
+def read_partitioned(directory: Path, *, stage: str | None = None) -> pl.DataFrame:
+    """Lê e concatena os arquivos de um artefato particionado em diretório.
+
+    Usado para artefatos grandes gravados em vários arquivos (um por usuário)
+    em vez de um único Parquet monolítico — evita que uma etapa precise
+    carregar um arquivo gigante de uma só vez.
+
+    Parameters
+    ----------
+    directory : Path
+        Diretório com um ``.parquet`` por partição.
+    stage : str, optional
+        Nome da etapa que deveria ter produzido o artefato, usado apenas
+        para compor a mensagem de erro quando o diretório está vazio.
+
+    Returns
+    -------
+    pl.DataFrame
+        Conteúdo consolidado, ordenado por ``user_id`` (e ``created_at``,
+        quando presente).
+
+    Raises
+    ------
+    DatasetNotFoundError
+        Se o diretório não existir ou não contiver nenhum arquivo.
+
+    Examples
+    --------
+    >>> read_partitioned(Path("data/interim/tweets_clean"), stage="preprocess")  # doctest: +SKIP
+    """
+    files = list_files(Path(directory), "*.parquet")
+    if not files:
+        hint = f" Execute antes a etapa '{stage}'." if stage else ""
+        raise DatasetNotFoundError(f"Artefato particionado não encontrado: {directory}.{hint}")
+
+    frames = [pl.read_parquet(file) for file in files]
+    combined = pl.concat(frames, how="vertical_relaxed")
+
+    sort_columns = [column for column in ("user_id", "created_at") if column in combined.columns]
+    if sort_columns:
+        combined = combined.sort(sort_columns)
+
+    logger.info(
+        "Lidos %d arquivos particionados (%d linhas, %d colunas) de %s.",
+        len(files),
+        combined.height,
+        combined.width,
+        directory,
+    )
+    return combined
+
+
 def count_users(directory: Path) -> int:
     """Conta quantos históricos de usuário já foram coletados.
 

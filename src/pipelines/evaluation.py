@@ -16,7 +16,7 @@ import polars as pl
 
 from config.logging import get_logger
 from constants.labels import LABEL_TO_INDEX
-from data.reader import read_parquet
+from data.reader import read_parquet, read_partitioned
 from evaluation.ablation import run_ablation, summarize_ablation
 from evaluation.evaluator import Evaluator
 from evaluation.reports import save_reports
@@ -29,7 +29,7 @@ from interpretability.shap_values import compute_shap_values, save_shap_summary,
 from models.persistence import load_model
 from pipelines.base import PipelineStage, StageContext
 from training.trainer import build_dataset, load_user_sequences, load_user_texts, split_features
-from utils.files import read_json, write_json
+from utils.files import list_files, read_json, write_json
 
 logger = get_logger(__name__)
 
@@ -78,8 +78,8 @@ class EvaluationStage(PipelineStage):
             return {"skipped": True, "reason": "conjunto de teste vazio"}
 
         texts = (
-            load_user_texts(read_parquet(paths.data.tweets_labeled))
-            if paths.data.tweets_labeled.is_file()
+            load_user_texts(read_partitioned(paths.data.tweets_labeled, stage="label"))
+            if list_files(paths.data.tweets_labeled, "*.parquet")
             else None
         )
         sequences = load_user_sequences(

@@ -10,7 +10,7 @@ import polars as pl
 
 from config.logging import get_logger
 from data.catalog import write_dataset_manifest
-from data.reader import read_parquet
+from data.reader import read_parquet, read_partitioned
 from data.writer import write_parquet
 from features.builder import build_user_features
 from features.semantic import aggregate_embeddings
@@ -75,7 +75,7 @@ class FeaturesStage(PipelineStage):
         config = context.config
         paths = context.paths
 
-        tweets = read_parquet(paths.data.tweets_labeled)
+        tweets = read_partitioned(paths.data.tweets_labeled, stage="label")
         labels = read_parquet(paths.data.user_labels)
 
         metadata = (
