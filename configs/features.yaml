@@ -54,7 +54,9 @@ semantic:
     llama: llama3.2
   pooling: mean                  # mean | cls
   max_length: 128
-  batch_size: 32
+  # Extração de embedding é só forward pass (sem otimizador/gradiente), então
+  # a V100S-32GB aguenta um lote bem maior que o usado em GPUs de 8-16 GB.
+  batch_size: 128
   device: auto
   normalize: true                # L2 — necessário para similaridade de cossenos
   # Agregação tweet -> usuário: a média captura o "centro semântico" do perfil;

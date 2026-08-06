@@ -18,7 +18,9 @@ sentiment:
   model_name: cardiffnlp/twitter-xlm-roberta-base-sentiment
   fallback_model_name: pysentimiento/bertweet-pt-sentiment
   revision: main
-  batch_size: 32
+  # Inferência pura (sem gradiente) em sequências curtas: a V100S-32GB
+  # comporta um lote bem maior que o dimensionado para GPUs de 8-16 GB.
+  batch_size: 128
   max_length: 128
   device: auto                   # auto | cpu | cuda
   # Mapeia os rótulos do modelo para o vocabulário do projeto.
@@ -37,7 +39,7 @@ sentiment:
 emotion:
   enabled: true
   model_name: pysentimiento/robertuito-emotion-analysis
-  batch_size: 32
+  batch_size: 128
   max_length: 128
   # Emoções mapeadas para o vocabulário da Proposta (Seção "Atributos Emocionais").
   target_emotions:

@@ -42,7 +42,10 @@ psychological_features:
     - ansiedade
     - risco_suicida
   batch_size_tweets: 20
-  max_concurrency: 2
+  # llama3.2 (~3B, quantizado) ocupa poucos GB de VRAM; a V100S-32GB comporta
+  # mais requisições concorrentes que o padrão pensado para GPUs de 8 GB.
+  # Requer `OLLAMA_NUM_PARALLEL >= 4` no servidor Ollama para ter efeito real.
+  max_concurrency: 4
   cache:
     enabled: true                # cache por hash do prompt: reexecutar é barato
     path: data/interim/llm_cache

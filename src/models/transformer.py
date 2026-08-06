@@ -156,7 +156,9 @@ class TransformerClassifier(BaseUserClassifier):
         Nome do modelo.
     params : dict
         Hiperparâmetros (``model_name``, ``max_length``, ``learning_rate``,
-        ``batch_size``, ``epochs``, ``user_aggregation``, ...).
+        ``batch_size``, ``epochs``, ``user_aggregation``, ``fp16``, ...).
+        ``fp16`` ativa precisão mista (Tensor Cores) durante o fine-tuning e
+        a inferência; é ignorado (com aviso) fora de GPU CUDA.
 
     Examples
     --------
@@ -174,6 +176,23 @@ class TransformerClassifier(BaseUserClassifier):
     def _hyperparameter(self, key: str, default: Any) -> Any:
         """Lê um hiperparâmetro com valor padrão."""
         return self.params.get(key, default)
+
+    def _resolve_fp16(self, device: str) -> bool:
+        """Decide se a precisão mista (fp16) deve ser usada.
+
+        Autocast fp16 só acelera em Tensor Cores de GPU CUDA; em CPU ele não
+        traz ganho e pode até ser mais lento, então a flag é ignorada (com
+        aviso) fora de ``cuda``.
+        """
+        requested = bool(self._hyperparameter("fp16", False))
+        if requested and device != "cuda":
+            logger.warning(
+                "fp16 solicitado para '%s', mas o dispositivo é '%s': treinando em precisão total.",
+                self.name,
+                device,
+            )
+            return False
+        return requested
 
     def _load(self) -> tuple[Any, Any]:
         """Carrega tokenizador e modelo de classificação."""
@@ -240,12 +259,16 @@ class TransformerClassifier(BaseUserClassifier):
         batch_size = int(self._hyperparameter("batch_size", 16))
         epochs = int(self._hyperparameter("epochs", 4))
         max_length = int(self._hyperparameter("max_length", 128))
+        use_fp16 = self._resolve_fp16(device)
 
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=float(self._hyperparameter("learning_rate", 2e-5)),
             weight_decay=float(self._hyperparameter("weight_decay", 0.01)),
         )
+        # `enabled=False` faz o GradScaler operar como no-op (scale=1.0):
+        # mesmo laço de código serve para fp16 e para precisão total.
+        scaler = torch.amp.GradScaler(device, enabled=use_fp16)
 
         counts = np.bincount(tweet_labels, minlength=len(self.classes))
         weights = torch.tensor(
@@ -276,10 +299,14 @@ class TransformerClassifier(BaseUserClassifier):
                     targets = torch.from_numpy(tweet_labels[indices]).long().to(device)
 
                     optimizer.zero_grad()
-                    logits = model(**encoded).logits
-                    loss = criterion(logits, targets)
-                    loss.backward()
-                    optimizer.step()
+                    with torch.amp.autocast(
+                        device_type=device, dtype=torch.float16, enabled=use_fp16
+                    ):
+                        logits = model(**encoded).logits
+                        loss = criterion(logits, targets)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
 
                     progress.advance(task, advance=len(indices))
 
@@ -319,6 +346,7 @@ class TransformerClassifier(BaseUserClassifier):
 
         batch_size = int(self._hyperparameter("batch_size", 16))
         max_length = int(self._hyperparameter("max_length", 128))
+        use_fp16 = self._resolve_fp16(device)
         chunks: list[np.ndarray] = []
 
         with torch.no_grad(), build_progress() as progress:
@@ -332,8 +360,11 @@ class TransformerClassifier(BaseUserClassifier):
                     max_length=max_length,
                     return_tensors="pt",
                 ).to(device)
-                logits = model(**encoded).logits
-                chunks.append(torch.softmax(logits, dim=1).cpu().numpy())
+                with torch.amp.autocast(device_type=device, dtype=torch.float16, enabled=use_fp16):
+                    logits = model(**encoded).logits
+                # Softmax em fp32: converter antes evita perda de precisão da
+                # normalização em probabilidades calculadas a partir de logits fp16.
+                chunks.append(torch.softmax(logits.float(), dim=1).cpu().numpy())
                 progress.advance(task, advance=len(batch_texts))
 
         return aggregate_user_probabilities(

@@ -7,6 +7,15 @@
 #
 # `baseline` é obrigatório e roda sempre: sem um benchmark simples não há como
 # afirmar que a complexidade adicional trouxe ganho real.
+#
+# --- Ajustes para GPU Tesla V100S-PCIE-32GB (Volta, CUDA 12.4) --------------
+# 32 GB de HBM2 sobram para os modelos deste projeto (BERT-base/mDeBERTa-base,
+# BiLSTM, XGBoost), então os `batch_size` foram aumentados em relação a um
+# ajuste pensado para GPUs de 8-16 GB — menos passos de otimizador por época,
+# treino mais rápido, sem trocar a arquitetura nem a semântica do experimento.
+# Volta (sm_70) tem Tensor Cores de FP16 (o que justifica `fp16: true`), mas
+# NÃO tem suporte nativo a BF16/TF32 (isso é Ampere+) — por isso o projeto
+# usa FP16 com `GradScaler`, nunca BF16, ao mexer no laço de treino.
 # =============================================================================
 
 # --- Baseline (sempre executado) --------------------------------------------
@@ -43,6 +52,11 @@ traditional:
       objective: multi:softprob
       eval_metric: mlogloss
       tree_method: hist
+      # XGBoost >= 2.x: `device: cuda` acelera o `tree_method: hist` na GPU
+      # (substitui o antigo `gpu_hist`). O dataset é tabular e pequeno
+      # (poucas centenas/milhares de usuários), então o ganho é modesto, mas
+      # a V100S está ociosa neste estágio do pipeline — sem custo usar.
+      device: cuda
       random_state: 42
       n_jobs: -1
   logistic_regression:
@@ -74,6 +88,9 @@ traditional:
       colsample_bytree: 0.8
       class_weight: balanced
       random_state: 42
+      # device_type: gpu não é definido aqui de propósito — o wheel padrão do
+      # PyPI (`pip install lightgbm`) não é compilado com suporte a GPU; ligar
+      # isso sem uma build customizada (CUDA/OpenCL) derruba o treino.
       n_jobs: -1
       verbose: -1
 
@@ -91,7 +108,10 @@ deep:
       max_tweets_per_user: 200      # sequência de tweets do usuário
       max_length: 64
       learning_rate: 0.001
-      batch_size: 16
+      # As sequências (batch, 200, dim_embedding) cabem folgadas na V100S de
+      # 32 GB; 16 era dimensionado para GPUs pequenas (~4-8 GB). Lote maior
+      # satura melhor o paralelismo da GPU.
+      batch_size: 64
       epochs: 30
       patience: 5
       random_state: 42
@@ -104,7 +124,7 @@ deep:
       bidirectional: false
       dropout: 0.3
       learning_rate: 0.001
-      batch_size: 16
+      batch_size: 64
       epochs: 30
       patience: 5
       random_state: 42
@@ -117,7 +137,7 @@ deep:
       kernel_sizes: [3, 4, 5]
       dropout: 0.5
       learning_rate: 0.001
-      batch_size: 16
+      batch_size: 64
       epochs: 30
       patience: 5
       random_state: 42
@@ -134,12 +154,14 @@ transformer:
       # probabilidades (mais estável e mais barato que fine-tune hierárquico).
       user_aggregation: mean
       learning_rate: 2.0e-5
-      batch_size: 16
+      # BERT-base + FP16 em max_length=128 cabe folgado em 32 GB; lote maior
+      # reduz o tempo de fine-tuning sem precisar acumular gradiente.
+      batch_size: 64
       epochs: 4
       warmup_ratio: 0.1
       weight_decay: 0.01
-      gradient_accumulation_steps: 2
-      fp16: true
+      gradient_accumulation_steps: 1
+      fp16: true              # Tensor Cores FP16 da Volta (sm_70)
       random_state: 42
   roberta:
     scope: exploratory
@@ -148,8 +170,9 @@ transformer:
       model_name: pucpr/biobertpt-all
       max_length: 128
       learning_rate: 2.0e-5
-      batch_size: 16
+      batch_size: 32
       epochs: 4
+      fp16: true
       random_state: 42
   deberta:
     scope: exploratory
@@ -158,8 +181,12 @@ transformer:
       model_name: microsoft/mdeberta-v3-base
       max_length: 128
       learning_rate: 2.0e-5
-      batch_size: 8
+      batch_size: 16
       epochs: 4
+      # fp16 deliberadamente OMITIDO: a atenção desentrelaçada do DeBERTa é
+      # conhecida por overflow numérico em FP16 puro (sem BF16 disponível na
+      # Volta para compensar). Rodar em FP32 é mais seguro que arriscar NaN
+      # no meio de um treino de horas.
       random_state: 42
 
 # --- LLM open-source (Ollama) — ver llm.yaml --------------------------------
@@ -215,6 +242,7 @@ hybrid:
       objective: multi:softprob
       eval_metric: mlogloss
       tree_method: hist
+      device: cuda
       random_state: 42
       n_jobs: -1
 
