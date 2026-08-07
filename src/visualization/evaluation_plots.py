@@ -23,6 +23,27 @@ from visualization.theme import (
 logger = get_logger(__name__)
 
 
+def _prepare_confusion_display(
+    data: np.ndarray, normalize: bool
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Prepara os valores exibidos e as anotações de texto da matriz de confusão."""
+    if not normalize:
+        return data, data.astype(int).astype(str), ""
+
+    row_sums = data.sum(axis=1, keepdims=True)
+    display = np.divide(data, row_sums, out=np.zeros_like(data), where=row_sums > 0)
+    annotations = np.array(
+        [
+            [
+                f"{display[i, j]:.2f}\n({int(data[i, j])})".replace(".", ",")
+                for j in range(data.shape[1])
+            ]
+            for i in range(data.shape[0])
+        ]
+    )
+    return display, annotations, ""
+
+
 def plot_confusion_matrix(
     matrix: np.ndarray | list[list[float]],
     *,
@@ -55,25 +76,7 @@ def plot_confusion_matrix(
     >>> plot_confusion_matrix([[10, 2], [3, 8]])  # doctest: +SKIP
     """
     data = np.asarray(matrix, dtype=float)
-
-    if normalize:
-        row_sums = data.sum(axis=1, keepdims=True)
-        display = np.divide(data, row_sums, out=np.zeros_like(data), where=row_sums > 0)
-        annotations = np.array(
-            [
-                [
-                    f"{display[i, j]:.2f}\n({int(data[i, j])})".replace(".", ",")
-                    for j in range(data.shape[1])
-                ]
-                for i in range(data.shape[0])
-            ]
-        )
-        fmt = ""
-    else:
-        display = data
-        annotations = data.astype(int).astype(str)
-        fmt = ""
-
+    display, annotations, fmt = _prepare_confusion_display(data, normalize)
     labels = get_class_labels()[: data.shape[0]]
 
     figure, axis = plt.subplots(figsize=FIGURE_SIZES["square"])
@@ -212,6 +215,32 @@ def plot_precision_recall_curves(
     return figure
 
 
+def _filter_reliability_bins(calibration: dict[str, Any]) -> list[dict[str, Any]]:
+    """Filtra os bins de confiabilidade com ao menos uma amostra."""
+    return [item for item in calibration.get("reliability_bins", []) if item["count"] > 0]
+
+
+def _plot_reliability_points(axis: Any, bins: list[dict[str, Any]]) -> None:
+    """Desenha os pontos observados de confiabilidade, se houver bins com dados."""
+    if not bins:
+        return
+
+    confidences = [item["confidence"] for item in bins]
+    accuracies = [item["accuracy"] for item in bins]
+    sizes = np.array([item["count"] for item in bins], dtype=float)
+
+    axis.plot(confidences, accuracies, marker="o", color="#C44E52", linewidth=2, label="Observado")
+    # O tamanho do marcador expõe quantas amostras sustentam cada ponto —
+    # sem isso, um bin com 3 amostras parece tão confiável quanto um com 300.
+    axis.scatter(
+        confidences,
+        accuracies,
+        s=40 + 260 * sizes / sizes.max(),
+        color="#C44E52",
+        alpha=0.3,
+    )
+
+
 def plot_reliability_curve(calibration: dict[str, Any], model_name: str = "") -> Any:
     """Plota a curva de confiabilidade (calibração).
 
@@ -231,28 +260,12 @@ def plot_reliability_curve(calibration: dict[str, Any], model_name: str = "") ->
     --------
     >>> plot_reliability_curve(resultado_calibracao)  # doctest: +SKIP
     """
-    bins = [item for item in calibration.get("reliability_bins", []) if item["count"] > 0]
+    bins = _filter_reliability_bins(calibration)
 
     figure, axis = plt.subplots(figsize=FIGURE_SIZES["square"])
     axis.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Calibração perfeita")
 
-    if bins:
-        confidences = [item["confidence"] for item in bins]
-        accuracies = [item["accuracy"] for item in bins]
-        sizes = np.array([item["count"] for item in bins], dtype=float)
-
-        axis.plot(
-            confidences, accuracies, marker="o", color="#C44E52", linewidth=2, label="Observado"
-        )
-        # O tamanho do marcador expõe quantas amostras sustentam cada ponto —
-        # sem isso, um bin com 3 amostras parece tão confiável quanto um com 300.
-        axis.scatter(
-            confidences,
-            accuracies,
-            s=40 + 260 * sizes / sizes.max(),
-            color="#C44E52",
-            alpha=0.3,
-        )
+    _plot_reliability_points(axis, bins)
 
     ece = calibration.get("expected_calibration_error", 0.0)
     axis.set_title(
@@ -266,6 +279,39 @@ def plot_reliability_curve(calibration: dict[str, Any], model_name: str = "") ->
     axis.legend(loc="upper left")
     figure.tight_layout()
     return figure
+
+
+def _add_confidence_error_bars(
+    axis: Any, data: Any, metric: str, lower_column: str, upper_column: str
+) -> None:
+    """Adiciona barras de erro com o intervalo de confiança, se disponível na tabela."""
+    if lower_column not in data.columns or upper_column not in data.columns:
+        return
+
+    errors = np.vstack(
+        [
+            (data[metric] - data[lower_column]).to_numpy(),
+            (data[upper_column] - data[metric]).to_numpy(),
+        ]
+    )
+    axis.errorbar(
+        data[metric],
+        range(len(data)),
+        xerr=np.abs(errors),
+        fmt="none",
+        ecolor="#333333",
+        capsize=4,
+        linewidth=1.2,
+    )
+
+
+def _annotate_bar_values(axis: Any, values: Any) -> None:
+    """Anota o valor numérico ao lado de cada barra horizontal."""
+    for position, value in enumerate(values):
+        if value is not None:
+            axis.text(
+                value + 0.01, position, f"{value:.4f}".replace(".", ","), va="center", fontsize=9
+            )
 
 
 def plot_model_comparison(comparison: pl.DataFrame, metric: str = "f1_macro") -> Any:
@@ -301,28 +347,8 @@ def plot_model_comparison(comparison: pl.DataFrame, metric: str = "f1_macro") ->
     axis.barh(data["modelo"], data[metric], color="#4C72B0", alpha=0.85)
 
     lower_column, upper_column = f"{metric}_ic_inferior", f"{metric}_ic_superior"
-    if lower_column in data.columns and upper_column in data.columns:
-        errors = np.vstack(
-            [
-                (data[metric] - data[lower_column]).to_numpy(),
-                (data[upper_column] - data[metric]).to_numpy(),
-            ]
-        )
-        axis.errorbar(
-            data[metric],
-            range(len(data)),
-            xerr=np.abs(errors),
-            fmt="none",
-            ecolor="#333333",
-            capsize=4,
-            linewidth=1.2,
-        )
-
-    for position, value in enumerate(data[metric]):
-        if value is not None:
-            axis.text(
-                value + 0.01, position, f"{value:.4f}".replace(".", ","), va="center", fontsize=9
-            )
+    _add_confidence_error_bars(axis, data, metric, lower_column, upper_column)
+    _annotate_bar_values(axis, data[metric])
 
     axis.set_xlim(0, 1.05)
     axis.set_title(
@@ -332,6 +358,37 @@ def plot_model_comparison(comparison: pl.DataFrame, metric: str = "f1_macro") ->
     axis.set_ylabel("")
     figure.tight_layout()
     return figure
+
+
+def _usable_slices(slices: dict[str, Any]) -> dict[str, Any]:
+    """Filtra as definições de fatia que possuem dados de fato."""
+    return {name: data for name, data in slices.items() if data.get("slices")}
+
+
+def _plot_slice_panel(axis: Any, name: str, data: dict[str, Any], metric: str) -> None:
+    """Plota o painel de desempenho de uma única definição de fatia."""
+    entries = data["slices"]
+    names = list(entries)
+    values = [entries[key].get(metric, 0.0) for key in names]
+    counts = [int(entries[key]["n"]) for key in names]
+
+    axis.bar(names, values, color="#55A868", alpha=0.85)
+    for position, (value, count) in enumerate(zip(values, counts, strict=True)):
+        axis.text(
+            position,
+            value + 0.02,
+            f"{value:.3f}\n(n={count})".replace(".", ","),
+            ha="center",
+            fontsize=8,
+        )
+
+    if data.get("exceeds_threshold"):
+        axis.set_facecolor("#FFF5F5")
+
+    axis.set_ylim(0, 1.15)
+    axis.set_title(f"Fatia: {name}")
+    axis.set_ylabel(METRIC_DISPLAY_NAMES.get(metric, metric))
+    axis.tick_params(axis="x", rotation=20)
 
 
 def plot_slice_performance(slices: dict[str, Any], metric: str = "f1_macro") -> Any | None:
@@ -353,36 +410,14 @@ def plot_slice_performance(slices: dict[str, Any], metric: str = "f1_macro") -> 
     --------
     >>> plot_slice_performance(resultado.slices)  # doctest: +SKIP
     """
-    usable = {name: data for name, data in slices.items() if data.get("slices")}
+    usable = _usable_slices(slices)
     if not usable:
         return None
 
     figure, axes = plt.subplots(1, len(usable), figsize=(6 * len(usable), 4.5), squeeze=False)
 
     for index, (name, data) in enumerate(usable.items()):
-        axis = axes[0][index]
-        entries = data["slices"]
-        names = list(entries)
-        values = [entries[key].get(metric, 0.0) for key in names]
-        counts = [int(entries[key]["n"]) for key in names]
-
-        axis.bar(names, values, color="#55A868", alpha=0.85)
-        for position, (value, count) in enumerate(zip(values, counts, strict=True)):
-            axis.text(
-                position,
-                value + 0.02,
-                f"{value:.3f}\n(n={count})".replace(".", ","),
-                ha="center",
-                fontsize=8,
-            )
-
-        if data.get("exceeds_threshold"):
-            axis.set_facecolor("#FFF5F5")
-
-        axis.set_ylim(0, 1.15)
-        axis.set_title(f"Fatia: {name}")
-        axis.set_ylabel(METRIC_DISPLAY_NAMES.get(metric, metric))
-        axis.tick_params(axis="x", rotation=20)
+        _plot_slice_panel(axes[0][index], name, data, metric)
 
     figure.suptitle("Desempenho por Subgrupo Comportamental", fontweight="bold")
     figure.tight_layout()

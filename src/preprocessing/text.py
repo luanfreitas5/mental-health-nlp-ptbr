@@ -91,18 +91,98 @@ def normalize_text(text: str, config: NormalizationSection) -> str:
     if config.strip_control_chars:
         result = CONTROL_CHARS_PATTERN.sub(" ", result)
 
-    # PII: e-mail antes de menção (ver docstring), telefone antes de número.
+    result = _apply_pii_redaction(result, config)
+    result = _apply_normalization_options(result, config)
+
+    return result.strip()
+
+
+def _apply_pii_redaction(text: str, config: NormalizationSection) -> str:
+    """Substitui e-mails, URLs, menções, telefones e números por placeholders.
+
+    A ordem importa: e-mail antes de menção (ver docstring de
+    :func:`normalize_text`), telefone antes de número.
+
+    Parameters
+    ----------
+    text : str
+        Texto já normalizado em Unicode, sem retweet nem caracteres de controle.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    str
+        Texto com PII substituída pelos placeholders configurados.
+    """
+    result = _redact_contact_identifiers(text, config)
+    return _redact_numeric_identifiers(result, config)
+
+
+def _redact_contact_identifiers(text: str, config: NormalizationSection) -> str:
+    """Substitui e-mails, URLs e menções por placeholders (e-mail antes de menção).
+
+    Parameters
+    ----------
+    text : str
+        Texto de entrada.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    str
+        Texto com e-mails, URLs e menções substituídos.
+    """
+    result = text
     if config.replace_emails is not None:
         result = EMAIL_PATTERN.sub(config.replace_emails, result)
     if config.replace_urls is not None:
         result = URL_PATTERN.sub(config.replace_urls, result)
     if config.replace_mentions is not None:
         result = MENTION_PATTERN.sub(config.replace_mentions, result)
+    return result
+
+
+def _redact_numeric_identifiers(text: str, config: NormalizationSection) -> str:
+    """Substitui telefones e números por placeholders (telefone antes de número).
+
+    Parameters
+    ----------
+    text : str
+        Texto de entrada.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    str
+        Texto com telefones e números substituídos.
+    """
+    result = text
     if config.replace_phone_numbers is not None:
         result = PHONE_PATTERN.sub(config.replace_phone_numbers, result)
     if config.replace_numbers is not None:
         result = NUMBER_PATTERN.sub(config.replace_numbers, result)
+    return result
 
+
+def _apply_normalization_options(text: str, config: NormalizationSection) -> str:
+    """Aplica desempacotamento de hashtags, colapso de repetições, emoji e espaços.
+
+    Parameters
+    ----------
+    text : str
+        Texto já com a PII redigida.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    str
+        Texto com as opções de normalização aplicadas.
+    """
+    result = text
     if config.unpack_hashtags:
         result = HASHTAG_PATTERN.sub(r"\1", result)
 
@@ -116,7 +196,7 @@ def normalize_text(text: str, config: NormalizationSection) -> str:
     if config.collapse_whitespace:
         result = WHITESPACE_PATTERN.sub(" ", result)
 
-    return result.strip()
+    return result
 
 
 def clean_text(text: str, config: CleaningSection, stopwords: frozenset[str]) -> str:
@@ -150,6 +230,27 @@ def clean_text(text: str, config: CleaningSection, stopwords: frozenset[str]) ->
     if not text:
         return ""
 
+    result = _strip_and_lowercase(text, config)
+    tokens = _filter_tokens(result, config, stopwords)
+
+    return " ".join(tokens)
+
+
+def _strip_and_lowercase(text: str, config: CleaningSection) -> str:
+    """Aplica minúsculas e remove emoji, acentos e pontuação, conforme a configuração.
+
+    Parameters
+    ----------
+    text : str
+        Texto já normalizado.
+    config : CleaningSection
+        Seção ``cleaning`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    str
+        Texto reduzido, antes da tokenização.
+    """
     result = text.lower() if config.lowercase else text
 
     if config.remove_emojis:
@@ -159,22 +260,63 @@ def clean_text(text: str, config: CleaningSection, stopwords: frozenset[str]) ->
     if config.remove_punctuation:
         result = PUNCTUATION_PATTERN.sub(" ", result)
 
+    return result
+
+
+def _filter_tokens(text: str, config: CleaningSection, stopwords: frozenset[str]) -> list[str]:
+    """Tokeniza por espaço e filtra tokens curtos e stopwords.
+
+    A lista de stopwords é comparada com e sem acento: em rede social, "não"
+    e "nao" aparecem com frequência semelhante. A whitelist é preservada
+    mesmo estando na lista de remoção (ver docstring de :func:`clean_text`).
+
+    Parameters
+    ----------
+    text : str
+        Texto já reduzido por :func:`_strip_and_lowercase`.
+    config : CleaningSection
+        Seção ``cleaning`` de ``configs/preprocessing.yaml``.
+    stopwords : frozenset of str
+        Stopwords a remover.
+
+    Returns
+    -------
+    list of str
+        Tokens filtrados.
+    """
     whitelist = {term.lower() for term in config.stopwords_whitelist}
     tokens: list[str] = []
-    for token in WHITESPACE_PATTERN.split(result):
-        if not token or len(token) < config.min_token_length:
+    for token in WHITESPACE_PATTERN.split(text):
+        if _is_token_too_short(token, config):
             continue
-        # A lista de stopwords é comparada com e sem acento: em rede social,
-        # "não" e "nao" aparecem com frequência semelhante.
-        if (
-            config.remove_stopwords
-            and token not in whitelist
-            and (token in stopwords or strip_accents(token) in stopwords)
-        ):
+        if _is_removable_stopword(token, config, stopwords, whitelist):
             continue
         tokens.append(token)
 
-    return " ".join(tokens)
+    return tokens
+
+
+def _is_token_too_short(token: str, config: CleaningSection) -> bool:
+    """Verifica se o token é vazio ou menor que o comprimento mínimo configurado."""
+    return not token or len(token) < config.min_token_length
+
+
+def _is_removable_stopword(
+    token: str,
+    config: CleaningSection,
+    stopwords: frozenset[str],
+    whitelist: set[str],
+) -> bool:
+    """Verifica se o token é uma stopword removível (fora da whitelist).
+
+    A lista de stopwords é comparada com e sem acento: em rede social, "não"
+    e "nao" aparecem com frequência semelhante.
+    """
+    return bool(
+        config.remove_stopwords
+        and token not in whitelist
+        and (token in stopwords or strip_accents(token) in stopwords)
+    )
 
 
 def tokenize(text: str) -> list[str]:

@@ -21,6 +21,7 @@ ao mesmo tempo, e nenhuma métrica revela isso.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import polars as pl
 
@@ -295,6 +296,82 @@ def resolve_consensus(votes: list[LabelVote], config: UserLabelingSection) -> tu
     return label, agreement
 
 
+def _collect_candidate_labels(tweets: pl.DataFrame, lexical: pl.DataFrame) -> pl.DataFrame:
+    """Deriva o rótulo candidato a partir do grupo de coleta mais frequente do usuário."""
+    if "source_group" in tweets.columns:
+        return (
+            tweets.filter(pl.col("source_group").is_not_null())
+            .group_by(USER_ID)
+            .agg(pl.col("source_group").mode().first().alias(CANDIDATE_LABEL))
+        )
+    return lexical.select(USER_ID).with_columns(pl.lit(None, dtype=pl.Utf8).alias(CANDIDATE_LABEL))
+
+
+def _collect_votes(row: dict[str, Any], config: UserLabelingSection) -> list[LabelVote]:
+    """Coleta os votos de cada fonte ativa para um usuário.
+
+    Parameters
+    ----------
+    row : dict
+        Linha combinada de evidência léxica, persistência temporal e rótulo candidato.
+    config : UserLabelingSection
+        Configuração da rotulação.
+
+    Returns
+    -------
+    list of LabelVote
+        Votos das fontes ativas para este usuário.
+    """
+    sources = config.sources
+    votes: list[LabelVote] = []
+
+    group_source = sources.get("collection_group")
+    if group_source and group_source.enabled and row.get(CANDIDATE_LABEL):
+        votes.append(LabelVote("collection_group", str(row[CANDIDATE_LABEL]), group_source.weight))
+
+    lexical_source = sources.get("lexical_evidence")
+    if lexical_source and lexical_source.enabled:
+        votes.append(
+            LabelVote(
+                "lexical_evidence",
+                label_from_lexical_evidence(row, config),
+                lexical_source.weight,
+            )
+        )
+
+    temporal_source = sources.get("temporal_persistence")
+    if temporal_source and temporal_source.enabled:
+        # A persistência confirma o risco apontado pelo léxico; sozinha,
+        # sua ausência vota em controle.
+        lexical_label = label_from_lexical_evidence(row, config)
+        persistent = bool(row.get("has_persistence", False))
+        temporal_label = lexical_label if persistent else str(UserLabel.CONTROLE)
+        votes.append(LabelVote("temporal_persistence", temporal_label, temporal_source.weight))
+
+    return votes
+
+
+def _build_user_record(row: dict[str, Any], config: UserLabelingSection) -> dict[str, object]:
+    """Monta o registro final de rotulação de um usuário a partir dos votos das fontes."""
+    votes = _collect_votes(row, config)
+    label, agreement = resolve_consensus(votes, config)
+
+    # Multirrótulo (análise de sensibilidade): registra todas as classes de
+    # risco com evidência, preservando a coocorrência que o rótulo
+    # multiclasse necessariamente colapsa.
+    multilabel = sorted({vote.label for vote in votes if vote.label != str(UserLabel.CONTROLE)})
+
+    return {
+        USER_ID: row[USER_ID],
+        USER_LABEL: label,
+        USER_LABEL_MULTILABEL: "|".join(multilabel) if multilabel else None,
+        CANDIDATE_LABEL: row.get(CANDIDATE_LABEL),
+        LABEL_SOURCE: config.strategy,
+        LABEL_AGREEMENT: agreement,
+        "manual_label": None,
+    }
+
+
 def assign_user_labels(
     tweets: pl.DataFrame,
     config: UserLabelingSection,
@@ -324,70 +401,13 @@ def assign_user_labels(
 
     # Rótulo candidato: grupo de coleta mais frequente entre os tweets semente
     # do usuário (os tweets de histórico têm `source_group` nulo).
-    if "source_group" in tweets.columns:
-        candidates = (
-            tweets.filter(pl.col("source_group").is_not_null())
-            .group_by(USER_ID)
-            .agg(pl.col("source_group").mode().first().alias(CANDIDATE_LABEL))
-        )
-    else:
-        candidates = lexical.select(USER_ID).with_columns(
-            pl.lit(None, dtype=pl.Utf8).alias(CANDIDATE_LABEL)
-        )
+    candidates = _collect_candidate_labels(tweets, lexical)
 
     merged = lexical.join(persistence, on=USER_ID, how="left").join(
         candidates, on=USER_ID, how="left"
     )
 
-    sources = config.sources
-    records: list[dict[str, object]] = []
-
-    for row in merged.iter_rows(named=True):
-        votes: list[LabelVote] = []
-
-        group_source = sources.get("collection_group")
-        if group_source and group_source.enabled and row.get(CANDIDATE_LABEL):
-            votes.append(
-                LabelVote("collection_group", str(row[CANDIDATE_LABEL]), group_source.weight)
-            )
-
-        lexical_source = sources.get("lexical_evidence")
-        if lexical_source and lexical_source.enabled:
-            votes.append(
-                LabelVote(
-                    "lexical_evidence",
-                    label_from_lexical_evidence(row, config),
-                    lexical_source.weight,
-                )
-            )
-
-        temporal_source = sources.get("temporal_persistence")
-        if temporal_source and temporal_source.enabled:
-            # A persistência confirma o risco apontado pelo léxico; sozinha,
-            # sua ausência vota em controle.
-            lexical_label = label_from_lexical_evidence(row, config)
-            persistent = bool(row.get("has_persistence", False))
-            temporal_label = lexical_label if persistent else str(UserLabel.CONTROLE)
-            votes.append(LabelVote("temporal_persistence", temporal_label, temporal_source.weight))
-
-        label, agreement = resolve_consensus(votes, config)
-
-        # Multirrótulo (análise de sensibilidade): registra todas as classes de
-        # risco com evidência, preservando a coocorrência que o rótulo
-        # multiclasse necessariamente colapsa.
-        multilabel = sorted({vote.label for vote in votes if vote.label != str(UserLabel.CONTROLE)})
-
-        records.append(
-            {
-                USER_ID: row[USER_ID],
-                USER_LABEL: label,
-                USER_LABEL_MULTILABEL: "|".join(multilabel) if multilabel else None,
-                CANDIDATE_LABEL: row.get(CANDIDATE_LABEL),
-                LABEL_SOURCE: config.strategy,
-                LABEL_AGREEMENT: agreement,
-                "manual_label": None,
-            }
-        )
+    records = [_build_user_record(row, config) for row in merged.iter_rows(named=True)]
 
     result = pl.DataFrame(records)
     distribution = result.group_by(USER_LABEL).len().sort("len", descending=True)

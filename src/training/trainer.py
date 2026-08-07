@@ -241,6 +241,77 @@ def train_model(
     return model
 
 
+def _resolve_feature_groups(config: Config, name: str) -> list[str] | None:
+    """Resolve os grupos de atributos configurados para um modelo."""
+    spec = config.models.all_models().get(name)
+    return spec.feature_groups if spec else None
+
+
+def _build_training_dataset(
+    name: str,
+    train_features: pl.DataFrame,
+    groups: list[str] | None,
+    texts: dict[str, list[str]] | None,
+    sequences: dict[str, np.ndarray] | None,
+) -> UserDataset | None:
+    """Monta o conjunto de treino de um modelo, retornando ``None`` se inválido."""
+    try:
+        return build_dataset(
+            train_features,
+            feature_groups=groups,
+            texts=texts,
+            sequences=sequences,
+        )
+    except ValueError:
+        logger.exception("Conjunto de treino inválido para '%s'.", name)
+        return None
+
+
+def _model_inputs_available(
+    name: str,
+    model: BaseUserClassifier,
+    texts: dict[str, list[str]] | None,
+    sequences: dict[str, np.ndarray] | None,
+) -> bool:
+    """Verifica se as entradas exigidas pelo modelo (texto/sequências) estão disponíveis."""
+    if model.requires_sequences and sequences is None:
+        logger.warning("Modelo '%s' pulado: sequências de embeddings indisponíveis.", name)
+        return False
+    if model.requires_text and texts is None:
+        logger.warning("Modelo '%s' pulado: textos dos usuários indisponíveis.", name)
+        return False
+    return True
+
+
+def _train_and_save_model(
+    name: str,
+    model: BaseUserClassifier,
+    dataset: UserDataset,
+    paths_models: Path,
+    dataset_hash: str,
+    tracker: ExperimentTracker | None,
+) -> BaseUserClassifier | None:
+    """Treina, registra e persiste um único modelo, isolando falhas de treinamento."""
+    try:
+        if tracker is not None:
+            with tracker.run(name, tags={"stage": "train"}):
+                trained_model = train_model(model, dataset, tracker, dataset_hash)
+                save_model(trained_model, paths_models, dataset_hash=dataset_hash)
+        else:
+            trained_model = train_model(model, dataset, None, dataset_hash)
+            save_model(trained_model, paths_models, dataset_hash=dataset_hash)
+    except (ValueError, RuntimeError, MemoryError, OSError):
+        logger.exception("Treinamento de '%s' falhou.", name)
+        return None
+
+    return trained_model
+
+
+def _describe_trained_models(trained: dict[str, BaseUserClassifier]) -> str:
+    """Descreve os nomes dos modelos treinados com sucesso, para log."""
+    return ", ".join(sorted(trained)) or "nenhum"
+
+
 def train_all(
     models: dict[str, BaseUserClassifier],
     train_features: pl.DataFrame,
@@ -285,39 +356,20 @@ def train_all(
     trained: dict[str, BaseUserClassifier] = {}
 
     for name, model in models.items():
-        spec = config.models.all_models().get(name)
-        groups = spec.feature_groups if spec else None
+        groups = _resolve_feature_groups(config, name)
 
-        try:
-            dataset = build_dataset(
-                train_features,
-                feature_groups=groups,
-                texts=texts,
-                sequences=sequences,
-            )
-        except ValueError:
-            logger.exception("Conjunto de treino inválido para '%s'.", name)
+        dataset = _build_training_dataset(name, train_features, groups, texts, sequences)
+        if dataset is None:
             continue
 
-        if model.requires_sequences and sequences is None:
-            logger.warning("Modelo '%s' pulado: sequências de embeddings indisponíveis.", name)
-            continue
-        if model.requires_text and texts is None:
-            logger.warning("Modelo '%s' pulado: textos dos usuários indisponíveis.", name)
+        if not _model_inputs_available(name, model, texts, sequences):
             continue
 
-        try:
-            if tracker is not None:
-                with tracker.run(name, tags={"stage": "train"}):
-                    trained[name] = train_model(model, dataset, tracker, dataset_hash)
-                    save_model(trained[name], paths_models, dataset_hash=dataset_hash)
-            else:
-                trained[name] = train_model(model, dataset, None, dataset_hash)
-                save_model(trained[name], paths_models, dataset_hash=dataset_hash)
-        except (ValueError, RuntimeError, MemoryError, OSError):
-            logger.exception("Treinamento de '%s' falhou.", name)
+        result = _train_and_save_model(name, model, dataset, paths_models, dataset_hash, tracker)
+        if result is not None:
+            trained[name] = result
 
-    logger.info("Modelos treinados com sucesso: %s.", ", ".join(sorted(trained)) or "nenhum")
+    logger.info("Modelos treinados com sucesso: %s.", _describe_trained_models(trained))
     return trained
 
 

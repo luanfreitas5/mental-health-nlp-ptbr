@@ -20,11 +20,13 @@ juntos derrubaria o desempenho.
 from __future__ import annotations
 
 import operator
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import polars as pl
+from rich.progress import Progress, TaskID
 
 from config.logging import get_logger
 from config.settings import AblationSection, Config
@@ -106,6 +108,125 @@ def build_dataset_for_groups(
     )
 
 
+def _resolve_available_groups(
+    train_features: pl.DataFrame,
+    ablation_config: AblationSection,
+) -> list[str]:
+    """Filtra os grupos configurados aos que possuem colunas na matriz."""
+    available = [
+        group for group in ablation_config.groups if list_feature_columns(train_features, [group])
+    ]
+
+    missing = set(ablation_config.groups) - set(available)
+    if missing:
+        logger.warning("Grupos sem colunas na matriz, excluídos da ablação: %s.", sorted(missing))
+
+    return available
+
+
+def _run_ablation_repeats(
+    train: UserDataset,
+    test: UserDataset,
+    name: str,
+    spec: Any,
+    config: Config,
+    ablation_config: AblationSection,
+    metric: str,
+) -> list[float]:
+    """Repete o treino/avaliação do modelo base para uma configuração de grupos."""
+    scores: list[float] = []
+    for repeat in range(ablation_config.n_repeats):
+        # A semente varia entre repetições para capturar a variância do
+        # próprio treinamento, e não apenas a dos dados.
+        params = {**spec.params, "random_state": config.random_seed + repeat}
+        model = create_model(
+            f"{ablation_config.base_model}_{name}",
+            spec.model_copy(update={"params": params}),
+            config,
+        )
+        model.fit(train)
+        predictions = model.predict(test)
+        assert test.labels is not None
+        scores.append(compute_metrics(test.labels, predictions)[metric])
+    return scores
+
+
+def _evaluate_group_configuration(
+    groups: list[str],
+    name: str,
+    train_features: pl.DataFrame,
+    test_features: pl.DataFrame,
+    label_to_index: dict[str, int],
+    spec: Any,
+    config: Config,
+    ablation_config: AblationSection,
+    metric: str,
+) -> AblationResult:
+    """Treina e avalia o modelo base restrito a um conjunto de grupos."""
+    train = build_dataset_for_groups(train_features, groups, label_to_index)
+    test = build_dataset_for_groups(test_features, groups, label_to_index)
+    scores = _run_ablation_repeats(train, test, name, spec, config, ablation_config, metric)
+
+    return AblationResult(
+        configuration=name,
+        groups=groups,
+        n_features=len(train.feature_names),
+        score_mean=float(np.mean(scores)),
+        score_std=float(np.std(scores)),
+        delta=0.0,
+    )
+
+
+def _run_leave_one_out(
+    available: list[str],
+    evaluate: Callable[[list[str], str], AblationResult],
+    full: AblationResult,
+    progress: Progress,
+    task: TaskID,
+) -> dict[str, Any]:
+    """Executa a etapa leave-one-out: remove um grupo por vez e mede a queda."""
+    leave_one_out: dict[str, Any] = {}
+    for group in available:
+        remaining = [name for name in available if name != group]
+        result = evaluate(remaining, f"sem_{group}")
+        leave_one_out[group] = result.__dict__ | {
+            "delta": result.score_mean - full.score_mean,
+        }
+        progress.advance(task)
+    return leave_one_out
+
+
+def _run_only_one(
+    available: list[str],
+    evaluate: Callable[[list[str], str], AblationResult],
+    full: AblationResult,
+    progress: Progress,
+    task: TaskID,
+) -> dict[str, Any]:
+    """Executa a etapa only-one: avalia cada grupo isoladamente."""
+    only_one: dict[str, Any] = {}
+    for group in available:
+        result = evaluate([group], f"apenas_{group}")
+        only_one[group] = result.__dict__ | {
+            "delta": result.score_mean - full.score_mean,
+        }
+        progress.advance(task)
+    return only_one
+
+
+def _rank_group_contributions(
+    full: AblationResult,
+    leave_one_out: dict[str, Any],
+) -> dict[str, float]:
+    """Ordena os grupos pela contribuição marginal (queda ao remover), decrescente."""
+    # Contribuição marginal = queda causada pela remoção do grupo. Quanto
+    # maior, mais o grupo acrescenta além do que os demais já capturam.
+    contributions = {
+        group: full.score_mean - entry["score_mean"] for group, entry in leave_one_out.items()
+    }
+    return dict(sorted(contributions.items(), key=operator.itemgetter(1), reverse=True))
+
+
 def run_ablation(
     train_features: pl.DataFrame,
     test_features: pl.DataFrame,
@@ -147,41 +268,20 @@ def run_ablation(
 
     spec = config.models.all_models()[ablation_config.base_model]
     metric = config.evaluation.metrics.primary
-    available = [
-        group for group in ablation_config.groups if list_feature_columns(train_features, [group])
-    ]
-
-    missing = set(ablation_config.groups) - set(available)
-    if missing:
-        logger.warning("Grupos sem colunas na matriz, excluídos da ablação: %s.", sorted(missing))
+    available = _resolve_available_groups(train_features, ablation_config)
 
     def evaluate(groups: list[str], name: str) -> AblationResult:
         """Treina e avalia o modelo base restrito a um conjunto de grupos."""
-        train = build_dataset_for_groups(train_features, groups, label_to_index)
-        test = build_dataset_for_groups(test_features, groups, label_to_index)
-
-        scores: list[float] = []
-        for repeat in range(ablation_config.n_repeats):
-            # A semente varia entre repetições para capturar a variância do
-            # próprio treinamento, e não apenas a dos dados.
-            params = {**spec.params, "random_state": config.random_seed + repeat}
-            model = create_model(
-                f"{ablation_config.base_model}_{name}",
-                spec.model_copy(update={"params": params}),
-                config,
-            )
-            model.fit(train)
-            predictions = model.predict(test)
-            assert test.labels is not None
-            scores.append(compute_metrics(test.labels, predictions)[metric])
-
-        return AblationResult(
-            configuration=name,
-            groups=groups,
-            n_features=len(train.feature_names),
-            score_mean=float(np.mean(scores)),
-            score_std=float(np.std(scores)),
-            delta=0.0,
+        return _evaluate_group_configuration(
+            groups,
+            name,
+            train_features,
+            test_features,
+            label_to_index,
+            spec,
+            config,
+            ablation_config,
+            metric,
         )
 
     total_steps = 1 + len(available) + (len(available) if ablation_config.include_only_one else 0)
@@ -194,35 +294,12 @@ def run_ablation(
         results["baseline"] = full.__dict__
         progress.advance(task)
 
-        leave_one_out: dict[str, Any] = {}
-        for group in available:
-            remaining = [name for name in available if name != group]
-            result = evaluate(remaining, f"sem_{group}")
-            leave_one_out[group] = result.__dict__ | {
-                "delta": result.score_mean - full.score_mean,
-            }
-            progress.advance(task)
-        results["leave_one_out"] = leave_one_out
+        results["leave_one_out"] = _run_leave_one_out(available, evaluate, full, progress, task)
 
         if ablation_config.include_only_one:
-            only_one: dict[str, Any] = {}
-            for group in available:
-                result = evaluate([group], f"apenas_{group}")
-                only_one[group] = result.__dict__ | {
-                    "delta": result.score_mean - full.score_mean,
-                }
-                progress.advance(task)
-            results["only_one"] = only_one
+            results["only_one"] = _run_only_one(available, evaluate, full, progress, task)
 
-    # Contribuição marginal = queda causada pela remoção do grupo. Quanto
-    # maior, mais o grupo acrescenta além do que os demais já capturam.
-    contributions = {
-        group: full.score_mean - entry["score_mean"]
-        for group, entry in results["leave_one_out"].items()
-    }
-    results["ranking"] = dict(
-        sorted(contributions.items(), key=operator.itemgetter(1), reverse=True)
-    )
+    results["ranking"] = _rank_group_contributions(full, results["leave_one_out"])
     results["metric"] = metric
 
     logger.info(

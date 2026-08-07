@@ -200,6 +200,174 @@ def build_slices_section(result: EvaluationResult) -> str:
     return "\n".join(blocks)
 
 
+def _build_header_section(
+    config: Config,
+    comparison: pl.DataFrame,
+    primary: str,
+    version: dict[str, str],
+) -> list[str]:
+    """Monta o cabeçalho, o aviso de incerteza e a tabela comparativa (seção 1)."""
+    return [
+        "# Relatório de Avaliação",
+        "",
+        f"**Projeto:** {config.general.project.name}  ",
+        f"**Versão:** {version['version']} (`{version['git_sha'][:8]}`)  ",
+        f"**Gerado em:** {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC  ",
+        f"**Métrica principal:** {METRIC_DISPLAY_NAMES.get(primary, primary)}",
+        "",
+        "> Todas as métricas são reportadas com intervalo de confiança de "
+        f"{config.evaluation.uncertainty.confidence_level:.0%} (bootstrap, "
+        f"{config.evaluation.uncertainty.n_bootstrap} reamostragens). Diferenças entre "
+        "modelos só devem ser consideradas reais quando confirmadas pelos testes "
+        "estatísticos da seção correspondente.",
+        "",
+        "## 1. Comparação entre modelos",
+        "",
+        build_comparison_table(comparison),
+        "",
+    ]
+
+
+def _build_best_model_section(results: dict[str, EvaluationResult], primary: str) -> list[str]:
+    """Destaca o melhor modelo pela métrica principal, se houver resultados."""
+    if not results:
+        return []
+
+    best_name = max(results, key=lambda name: results[name].metrics.get(primary, float("-inf")))
+    best = results[best_name]
+    return [
+        f"**Melhor modelo:** `{best_name}` — "
+        f"{METRIC_DISPLAY_NAMES.get(primary, primary)} = "
+        f"{format_metric_with_ci(best.confidence_interval)}",
+        "",
+    ]
+
+
+def _build_single_model_section(name: str, result: EvaluationResult) -> list[str]:
+    """Monta a subseção detalhada (classes, matriz, calibração, fatias) de um modelo."""
+    lines = [
+        f"### {name}",
+        "",
+        "#### Métricas por classe",
+        "",
+        build_per_class_table(result),
+        "",
+        "#### Matriz de confusão",
+        "",
+        build_confusion_table(result),
+        "",
+    ]
+    if result.calibration:
+        lines.extend(
+            [
+                "#### Calibração",
+                "",
+                result.calibration.get("interpretation", ""),
+                "",
+            ]
+        )
+    if result.slices:
+        lines.extend(["#### Desempenho por fatia", "", build_slices_section(result), ""])
+    return lines
+
+
+def _build_model_details_section(results: dict[str, EvaluationResult]) -> list[str]:
+    """Monta a seção 2 (desempenho detalhado por modelo)."""
+    lines = ["## 2. Desempenho detalhado por modelo", ""]
+    for name, result in results.items():
+        lines.extend(_build_single_model_section(name, result))
+    return lines
+
+
+def _build_friedman_subsection(statistics: dict[str, Any]) -> list[str]:
+    """Monta a subseção do teste de Friedman, se ele tiver sido executado."""
+    if "friedman" not in statistics:
+        return []
+
+    return [
+        "### Teste de Friedman",
+        "",
+        statistics["friedman"].get("interpretation", ""),
+        "",
+    ]
+
+
+def _build_pairwise_subsection(statistics: dict[str, Any]) -> list[str]:
+    """Monta a subseção de comparações par a par (Wilcoxon + Holm), se disponível."""
+    if "pairwise" not in statistics:
+        return []
+
+    lines = [
+        "### Comparações par a par (Wilcoxon com correção de Holm)",
+        "",
+        "| Comparação | p-valor | p corrigido | Significativo | Efeito |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for pair, entry in statistics["pairwise"].items():
+        lines.append(
+            f"| {pair.replace('_vs_', ' vs. ')} | "
+            f"{_format_number(entry['p_value'])} | "
+            f"{_format_number(entry['p_value_corrected'])} | "
+            f"{'sim' if entry['significant'] else 'não'} | "
+            f"{_format_number(entry['effect_size'], precision=3)} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _build_statistics_section(statistics: dict[str, Any] | None) -> list[str]:
+    """Monta a seção 3 (testes estatísticos), se houver resultados a reportar."""
+    if not statistics:
+        return []
+
+    lines = ["## 3. Testes estatísticos", ""]
+    lines.extend(_build_friedman_subsection(statistics))
+    lines.extend(_build_pairwise_subsection(statistics))
+    return lines
+
+
+def _build_ablation_section(ablation: pl.DataFrame | None) -> list[str]:
+    """Monta a seção 4 (Ablation Study), se houver resumo disponível."""
+    if ablation is None or ablation.is_empty():
+        return []
+
+    lines = [
+        "## 4. Ablation Study",
+        "",
+        "Contribuição marginal de cada grupo de atributos (queda na métrica "
+        "principal ao remover o grupo do modelo híbrido).",
+        "",
+        "| Grupo | Contribuição marginal | Sem o grupo | Apenas o grupo | Atributos |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        f"| {row['grupo']} | {_format_number(row['contribuicao_marginal'])} | "
+        f"{_format_number(row['score_sem_grupo'])} | "
+        f"{_format_number(row['score_apenas_grupo'])} | "
+        f"{row['n_atributos']} |"
+        for row in ablation.iter_rows(named=True)
+    )
+    lines.append("")
+    return lines
+
+
+def _build_limitations_section() -> list[str]:
+    """Monta a seção fixa de limitações do sistema."""
+    return [
+        "## Limitações",
+        "",
+        "- O rótulo `controle` significa *sem sinais detectados no recorte coletado*, "
+        "e não ausência clínica confirmada (viés de seleção documentado no datasheet).",
+        "- Os rótulos vêm de supervisão fraca; a concordância com a revisão manual "
+        "(kappa de Cohen) delimita o teto de desempenho alcançável.",
+        "- Não há atributos demográficos coletados (minimização de dados / LGPD), "
+        "então a auditoria de disparidade é comportamental, não demográfica.",
+        "- Este sistema é uma ferramenta de **triagem para pesquisa**. Não constitui "
+        "diagnóstico clínico nem substitui avaliação profissional.",
+        "",
+    ]
+
+
 def build_markdown_report(
     results: dict[str, EvaluationResult],
     comparison: pl.DataFrame,
@@ -234,134 +402,85 @@ def build_markdown_report(
     version = describe_version()
     primary = config.evaluation.metrics.primary
 
-    sections: list[str] = [
-        "# Relatório de Avaliação",
-        "",
-        f"**Projeto:** {config.general.project.name}  ",
-        f"**Versão:** {version['version']} (`{version['git_sha'][:8]}`)  ",
-        f"**Gerado em:** {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC  ",
-        f"**Métrica principal:** {METRIC_DISPLAY_NAMES.get(primary, primary)}",
-        "",
-        "> Todas as métricas são reportadas com intervalo de confiança de "
-        f"{config.evaluation.uncertainty.confidence_level:.0%} (bootstrap, "
-        f"{config.evaluation.uncertainty.n_bootstrap} reamostragens). Diferenças entre "
-        "modelos só devem ser consideradas reais quando confirmadas pelos testes "
-        "estatísticos da seção correspondente.",
-        "",
-        "## 1. Comparação entre modelos",
-        "",
-        build_comparison_table(comparison),
-        "",
-    ]
-
-    if results:
-        best_name = max(results, key=lambda name: results[name].metrics.get(primary, float("-inf")))
-        best = results[best_name]
-        sections.extend(
-            [
-                f"**Melhor modelo:** `{best_name}` — "
-                f"{METRIC_DISPLAY_NAMES.get(primary, primary)} = "
-                f"{format_metric_with_ci(best.confidence_interval)}",
-                "",
-            ]
-        )
-
-    sections.extend(["## 2. Desempenho detalhado por modelo", ""])
-    for name, result in results.items():
-        sections.extend(
-            [
-                f"### {name}",
-                "",
-                "#### Métricas por classe",
-                "",
-                build_per_class_table(result),
-                "",
-                "#### Matriz de confusão",
-                "",
-                build_confusion_table(result),
-                "",
-            ]
-        )
-        if result.calibration:
-            sections.extend(
-                [
-                    "#### Calibração",
-                    "",
-                    result.calibration.get("interpretation", ""),
-                    "",
-                ]
-            )
-        if result.slices:
-            sections.extend(["#### Desempenho por fatia", "", build_slices_section(result), ""])
-
-    if statistics:
-        sections.extend(["## 3. Testes estatísticos", ""])
-        if "friedman" in statistics:
-            sections.extend(
-                [
-                    "### Teste de Friedman",
-                    "",
-                    statistics["friedman"].get("interpretation", ""),
-                    "",
-                ]
-            )
-        if "pairwise" in statistics:
-            sections.extend(
-                [
-                    "### Comparações par a par (Wilcoxon com correção de Holm)",
-                    "",
-                    "| Comparação | p-valor | p corrigido | Significativo | Efeito |",
-                    "| --- | --- | --- | --- | --- |",
-                ]
-            )
-            for pair, entry in statistics["pairwise"].items():
-                sections.append(
-                    f"| {pair.replace('_vs_', ' vs. ')} | "
-                    f"{_format_number(entry['p_value'])} | "
-                    f"{_format_number(entry['p_value_corrected'])} | "
-                    f"{'sim' if entry['significant'] else 'não'} | "
-                    f"{_format_number(entry['effect_size'], precision=3)} |"
-                )
-            sections.append("")
-
-    if ablation is not None and not ablation.is_empty():
-        sections.extend(
-            [
-                "## 4. Ablation Study",
-                "",
-                "Contribuição marginal de cada grupo de atributos (queda na métrica "
-                "principal ao remover o grupo do modelo híbrido).",
-                "",
-                "| Grupo | Contribuição marginal | Sem o grupo | Apenas o grupo | Atributos |",
-                "| --- | --- | --- | --- | --- |",
-            ]
-        )
-        sections.extend(
-            f"| {row['grupo']} | {_format_number(row['contribuicao_marginal'])} | "
-            f"{_format_number(row['score_sem_grupo'])} | "
-            f"{_format_number(row['score_apenas_grupo'])} | "
-            f"{row['n_atributos']} |"
-            for row in ablation.iter_rows(named=True)
-        )
-        sections.append("")
-
-    sections.extend(
-        [
-            "## Limitações",
-            "",
-            "- O rótulo `controle` significa *sem sinais detectados no recorte coletado*, "
-            "e não ausência clínica confirmada (viés de seleção documentado no datasheet).",
-            "- Os rótulos vêm de supervisão fraca; a concordância com a revisão manual "
-            "(kappa de Cohen) delimita o teto de desempenho alcançável.",
-            "- Não há atributos demográficos coletados (minimização de dados / LGPD), "
-            "então a auditoria de disparidade é comportamental, não demográfica.",
-            "- Este sistema é uma ferramenta de **triagem para pesquisa**. Não constitui "
-            "diagnóstico clínico nem substitui avaliação profissional.",
-            "",
-        ]
-    )
+    sections: list[str] = []
+    sections.extend(_build_header_section(config, comparison, primary, version))
+    sections.extend(_build_best_model_section(results, primary))
+    sections.extend(_build_model_details_section(results))
+    sections.extend(_build_statistics_section(statistics))
+    sections.extend(_build_ablation_section(ablation))
+    sections.extend(_build_limitations_section())
 
     return "\n".join(sections)
+
+
+def _write_json_report(
+    results: dict[str, EvaluationResult],
+    statistics: dict[str, Any] | None,
+    config: Config,
+    paths: ProjectPaths,
+) -> Path:
+    """Grava o relatório JSON com métricas por modelo e testes estatísticos."""
+    payload = {
+        **describe_version(),
+        "primary_metric": config.evaluation.metrics.primary,
+        "models": {name: result.to_dict() for name, result in results.items()},
+        "statistics": statistics or {},
+    }
+    return write_json(paths.reports.metrics / "evaluation.json", payload)
+
+
+def _write_csv_reports(
+    comparison: pl.DataFrame,
+    ablation: pl.DataFrame | None,
+    paths: ProjectPaths,
+) -> dict[str, Path]:
+    """Grava a tabela comparativa e, se disponível, o resumo do Ablation Study."""
+    written: dict[str, Path] = {}
+    if comparison.is_empty():
+        return written
+
+    target = paths.reports.tables / "model_comparison.csv"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    comparison.write_csv(target)
+    written["comparison_csv"] = target
+
+    if ablation is not None and not ablation.is_empty():
+        ablation_path = paths.reports.ablation / "ablation_summary.csv"
+        ablation_path.parent.mkdir(parents=True, exist_ok=True)
+        ablation.write_csv(ablation_path)
+        written["ablation_csv"] = ablation_path
+
+    return written
+
+
+def _collect_prediction_records(results: dict[str, EvaluationResult]) -> list[dict[str, Any]]:
+    """Achata as predições de todos os modelos em registros linha a linha."""
+    return [
+        {
+            "modelo": name,
+            "user_id": user_id,
+            "y_true": result.predictions["y_true"][index],
+            "y_pred": result.predictions["y_pred"][index],
+        }
+        for name, result in results.items()
+        if result.predictions
+        for index, user_id in enumerate(result.predictions["user_ids"])
+    ]
+
+
+def _write_predictions_report(
+    results: dict[str, EvaluationResult],
+    paths: ProjectPaths,
+) -> dict[str, Path]:
+    """Grava as predições individuais em CSV, se houver registros disponíveis."""
+    records = _collect_prediction_records(results)
+    if not records:
+        return {}
+
+    target = paths.reports.metrics / "predictions.csv"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(records).write_csv(target)
+    return {"predictions_csv": target}
 
 
 def save_reports(
@@ -402,47 +521,17 @@ def save_reports(
     written: dict[str, Path] = {}
 
     if "json" in formats:
-        payload = {
-            **describe_version(),
-            "primary_metric": config.evaluation.metrics.primary,
-            "models": {name: result.to_dict() for name, result in results.items()},
-            "statistics": statistics or {},
-        }
-        written["metrics_json"] = write_json(paths.reports.metrics / "evaluation.json", payload)
+        written["metrics_json"] = _write_json_report(results, statistics, config, paths)
 
-    if "csv" in formats and not comparison.is_empty():
-        target = paths.reports.tables / "model_comparison.csv"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        comparison.write_csv(target)
-        written["comparison_csv"] = target
-
-        if ablation is not None and not ablation.is_empty():
-            ablation_path = paths.reports.ablation / "ablation_summary.csv"
-            ablation_path.parent.mkdir(parents=True, exist_ok=True)
-            ablation.write_csv(ablation_path)
-            written["ablation_csv"] = ablation_path
+    if "csv" in formats:
+        written.update(_write_csv_reports(comparison, ablation, paths))
 
     if "md" in formats:
         content = build_markdown_report(results, comparison, config, statistics, ablation)
         written["report_md"] = write_text(paths.reports.root / "evaluation_report.md", content)
 
     if config.evaluation.reporting.save_predictions:
-        records = [
-            {
-                "modelo": name,
-                "user_id": user_id,
-                "y_true": result.predictions["y_true"][index],
-                "y_pred": result.predictions["y_pred"][index],
-            }
-            for name, result in results.items()
-            if result.predictions
-            for index, user_id in enumerate(result.predictions["user_ids"])
-        ]
-        if records:
-            target = paths.reports.metrics / "predictions.csv"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            pl.DataFrame(records).write_csv(target)
-            written["predictions_csv"] = target
+        written.update(_write_predictions_report(results, paths))
 
     logger.info("Relatórios gravados: %s.", ", ".join(sorted(written)))
     return written

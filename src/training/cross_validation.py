@@ -89,6 +89,78 @@ def build_fold_datasets(
     return subset(train_positions), subset(validation_positions)
 
 
+def _evaluate_fold(
+    name: str,
+    spec: ModelSpec,
+    dataset: UserDataset,
+    splits: pl.DataFrame,
+    fold: int,
+    config: Config,
+) -> dict[str, float] | None:
+    """Treina e avalia um único fold, retornando ``None`` se o fold estiver vazio.
+
+    Parameters
+    ----------
+    name : str
+        Nome do modelo.
+    spec : ModelSpec
+        Especificação do modelo.
+    dataset : UserDataset
+        Conjunto de desenvolvimento completo.
+    splits : pl.DataFrame
+        Tabela de partições com os folds.
+    fold : int
+        Índice do fold usado como validação.
+    config : Config
+        Configuração completa do projeto.
+
+    Returns
+    -------
+    dict of str to float or None
+        Métricas do fold, ou ``None`` se o fold estiver vazio.
+    """
+    train, validation = build_fold_datasets(dataset, splits, fold)
+
+    if len(validation) == 0 or train.labels is None:
+        logger.warning("Fold %d vazio para '%s': ignorado.", fold, name)
+        return None
+
+    model = create_model(f"{name}_fold{fold}", spec, config)
+    model.fit(train)
+
+    predictions = model.predict(validation)
+    assert validation.labels is not None
+    return compute_metrics(validation.labels, predictions, model.predict_proba(validation))
+
+
+def _summarize_fold_scores(scores: list[float]) -> dict[str, float]:
+    """Calcula média, desvio e intervalo de confiança (IC 95%) dos scores por fold.
+
+    Parameters
+    ----------
+    scores : list of float
+        Score da métrica principal em cada fold válido.
+
+    Returns
+    -------
+    dict
+        ``mean``, ``std``, ``ci_margin``, ``ci_lower`` e ``ci_upper``.
+    """
+    array = np.array(scores)
+    # IC pela distribuição t: com 5 folds, a aproximação normal subestima a
+    # largura do intervalo de forma relevante.
+    margin = 1.96 * array.std(ddof=1) / np.sqrt(len(array)) if len(array) > 1 else 0.0
+    std = float(array.std(ddof=1)) if len(array) > 1 else 0.0
+
+    return {
+        "mean": float(array.mean()),
+        "std": std,
+        "ci_margin": float(margin),
+        "ci_lower": float(array.mean() - margin),
+        "ci_upper": float(array.mean() + margin),
+    }
+
+
 def cross_validate_model(
     name: str,
     spec: ModelSpec,
@@ -131,53 +203,36 @@ def cross_validate_model(
         task = progress.add_task(f"Validação cruzada — {name}", total=n_splits)
 
         for fold in range(n_splits):
-            train, validation = build_fold_datasets(dataset, splits, fold)
-
-            if len(validation) == 0 or train.labels is None:
-                logger.warning("Fold %d vazio para '%s': ignorado.", fold, name)
-                progress.advance(task)
-                continue
-
-            model = create_model(f"{name}_fold{fold}", spec, config)
-            model.fit(train)
-
-            predictions = model.predict(validation)
-            assert validation.labels is not None
-            metrics = compute_metrics(
-                validation.labels, predictions, model.predict_proba(validation)
-            )
-
-            scores.append(metrics[primary])
-            per_fold.append(metrics)
+            metrics = _evaluate_fold(name, spec, dataset, splits, fold, config)
+            if metrics is not None:
+                scores.append(metrics[primary])
+                per_fold.append(metrics)
             progress.advance(task)
 
     if not scores:
         logger.error("Nenhum fold válido para '%s'.", name)
         return {"model": name, "scores": [], "mean": float("nan"), "std": float("nan")}
 
-    array = np.array(scores)
-    # IC pela distribuição t: com 5 folds, a aproximação normal subestima a
-    # largura do intervalo de forma relevante.
-    margin = 1.96 * array.std(ddof=1) / np.sqrt(len(array)) if len(array) > 1 else 0.0
+    summary = _summarize_fold_scores(scores)
 
     logger.info(
         "%s | %s = %.4f ± %.4f (IC 95%%, %d folds)",
         name,
         primary,
-        array.mean(),
-        margin,
-        len(array),
+        summary["mean"],
+        summary["ci_margin"],
+        len(scores),
     )
 
     return {
         "model": name,
         "metric": primary,
         "scores": scores,
-        "mean": float(array.mean()),
-        "std": float(array.std(ddof=1)) if len(array) > 1 else 0.0,
-        "ci_margin": float(margin),
-        "ci_lower": float(array.mean() - margin),
-        "ci_upper": float(array.mean() + margin),
+        "mean": summary["mean"],
+        "std": summary["std"],
+        "ci_margin": summary["ci_margin"],
+        "ci_lower": summary["ci_lower"],
+        "ci_upper": summary["ci_upper"],
         "per_fold_metrics": per_fold,
     }
 
@@ -223,6 +278,31 @@ def cross_validate_all(
     return results
 
 
+def _build_complete_scores(results: dict[str, dict[str, Any]]) -> dict[str, np.ndarray]:
+    """Converte em array numpy os scores de cada modelo que completou algum fold."""
+    return {
+        name: np.array(result["scores"]) for name, result in results.items() if result.get("scores")
+    }
+
+
+def _align_fold_scores(complete: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Restringe os scores aos modelos que completaram o mesmo número de folds.
+
+    Comparar séries de tamanhos diferentes invalidaria os testes pareados.
+    """
+    expected = max(len(scores) for scores in complete.values())
+    aligned = {name: scores for name, scores in complete.items() if len(scores) == expected}
+
+    dropped = set(complete) - set(aligned)
+    if dropped:
+        logger.warning(
+            "Modelos excluídos dos testes pareados por número diferente de folds: %s.",
+            sorted(dropped),
+        )
+
+    return aligned
+
+
 def extract_fold_scores(results: dict[str, dict[str, Any]]) -> dict[str, np.ndarray]:
     """Extrai os scores por fold para os testes estatísticos pareados.
 
@@ -242,20 +322,8 @@ def extract_fold_scores(results: dict[str, dict[str, Any]]) -> dict[str, np.ndar
     --------
     >>> extract_fold_scores(resultados)  # doctest: +SKIP
     """
-    complete = {
-        name: np.array(result["scores"]) for name, result in results.items() if result.get("scores")
-    }
+    complete = _build_complete_scores(results)
     if not complete:
         return {}
 
-    expected = max(len(scores) for scores in complete.values())
-    aligned = {name: scores for name, scores in complete.items() if len(scores) == expected}
-
-    dropped = set(complete) - set(aligned)
-    if dropped:
-        logger.warning(
-            "Modelos excluídos dos testes pareados por número diferente de folds: %s.",
-            sorted(dropped),
-        )
-
-    return aligned
+    return _align_fold_scores(complete)

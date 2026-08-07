@@ -22,6 +22,30 @@ from visualization.theme import (
 logger = get_logger(__name__)
 
 
+def _present_classes(merged: pl.DataFrame, label_column: str = USER_LABEL) -> list[str]:
+    """Retorna as classes de ``CLASS_ORDER`` presentes no DataFrame combinado."""
+    present = set(merged[label_column].unique().to_list())
+    return [name for name in CLASS_ORDER if name in present]
+
+
+def _annotate_bar_percentages(axis: Any, total: int) -> None:
+    """Anota cada barra do gráfico com a contagem e o percentual sobre o total."""
+    for container in axis.containers:
+        # `axis.containers` é tipado como `list[Container]` genérico, mas o
+        # `barplot` do seaborn sempre popula `BarContainer`.
+        axis.bar_label(
+            container,  # pyright: ignore[reportArgumentType]
+            labels=[
+                f"{int(bar.get_height())}\n({100 * bar.get_height() / total:.1f}%)".replace(
+                    ".", ","
+                )
+                for bar in container
+            ],
+            padding=3,
+            fontsize=9,
+        )
+
+
 def plot_class_distribution(labels: pl.DataFrame, column: str = USER_LABEL) -> Any:
     """Plota a distribuição de usuários por classe.
 
@@ -68,20 +92,7 @@ def plot_class_distribution(labels: pl.DataFrame, column: str = USER_LABEL) -> A
     )
 
     total = int(counts["len"].sum())
-    for container in axis.containers:
-        # `axis.containers` é tipado como `list[Container]` genérico, mas o
-        # `barplot` do seaborn sempre popula `BarContainer`.
-        axis.bar_label(
-            container,  # pyright: ignore[reportArgumentType]
-            labels=[
-                f"{int(bar.get_height())}\n({100 * bar.get_height() / total:.1f}%)".replace(
-                    ".", ","
-                )
-                for bar in container
-            ],
-            padding=3,
-            fontsize=9,
-        )
+    _annotate_bar_percentages(axis, total)
 
     # `Series.max()`/`.min()` são tipados de forma genérica nos stubs do
     # Polars; a coluna `len()` é sempre inteira.
@@ -93,6 +104,26 @@ def plot_class_distribution(labels: pl.DataFrame, column: str = USER_LABEL) -> A
     axis.set_ylabel("Número de usuários")
     figure.tight_layout()
     return figure
+
+
+def _plot_word_frequency_panel(axis: Any, texts: list[str], class_name: str, top_n: int) -> None:
+    """Plota o painel de palavras mais frequentes de uma classe."""
+    counter = Counter(token for text in texts for token in str(text).split())
+    common = counter.most_common(top_n)
+    if not common:
+        axis.set_visible(False)
+        return
+
+    words, frequencies = zip(*common, strict=True)
+    sns.barplot(
+        x=list(frequencies),
+        y=list(words),
+        color=get_class_palette([class_name])[0],
+        ax=axis,
+    )
+    axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
+    axis.set_xlabel("Frequência")
+    axis.set_ylabel("")
 
 
 def plot_word_frequency(
@@ -125,34 +156,43 @@ def plot_word_frequency(
     >>> plot_word_frequency(tweets, rotulos)  # doctest: +SKIP
     """
     merged = tweets.join(labels.select(["user_id", USER_LABEL]), on="user_id", how="inner")
-    classes = [name for name in CLASS_ORDER if name in merged[USER_LABEL].unique().to_list()]
+    classes = _present_classes(merged)
 
     figure, axes = plt.subplots(1, len(classes), figsize=(6 * len(classes), 6), squeeze=False)
 
     for index, class_name in enumerate(classes):
         texts = merged.filter(pl.col(USER_LABEL) == class_name)[TEXT_CLEAN].to_list()
-        counter = Counter(token for text in texts for token in str(text).split())
-        common = counter.most_common(top_n)
-
-        axis = axes[0][index]
-        if not common:
-            axis.set_visible(False)
-            continue
-
-        words, frequencies = zip(*common, strict=True)
-        sns.barplot(
-            x=list(frequencies),
-            y=list(words),
-            color=get_class_palette([class_name])[0],
-            ax=axis,
-        )
-        axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
-        axis.set_xlabel("Frequência")
-        axis.set_ylabel("")
+        _plot_word_frequency_panel(axes[0][index], texts, class_name, top_n)
 
     figure.suptitle(f"{top_n} Palavras Mais Frequentes por Classe", fontweight="bold")
     figure.tight_layout()
     return figure
+
+
+def _plot_ngram_panel(axis: Any, texts: list[str], class_name: str, n: int, top_n: int) -> None:
+    """Plota o painel de n-grams mais frequentes de uma classe."""
+    counter: Counter[str] = Counter()
+    for text in texts:
+        tokens = str(text).split()
+        counter.update(
+            " ".join(tokens[position : position + n]) for position in range(len(tokens) - n + 1)
+        )
+
+    common = counter.most_common(top_n)
+    if not common:
+        axis.set_visible(False)
+        return
+
+    grams, frequencies = zip(*common, strict=True)
+    sns.barplot(
+        x=list(frequencies),
+        y=list(grams),
+        color=get_class_palette([class_name])[0],
+        ax=axis,
+    )
+    axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
+    axis.set_xlabel("Frequência")
+    axis.set_ylabel("")
 
 
 def plot_ngrams(
@@ -184,40 +224,39 @@ def plot_ngrams(
     >>> plot_ngrams(tweets, rotulos, n=2)  # doctest: +SKIP
     """
     merged = tweets.join(labels.select(["user_id", USER_LABEL]), on="user_id", how="inner")
-    classes = [name for name in CLASS_ORDER if name in merged[USER_LABEL].unique().to_list()]
+    classes = _present_classes(merged)
 
     figure, axes = plt.subplots(1, len(classes), figsize=(7 * len(classes), 6), squeeze=False)
 
     for index, class_name in enumerate(classes):
         texts = merged.filter(pl.col(USER_LABEL) == class_name)[TEXT_CLEAN].to_list()
-        counter: Counter[str] = Counter()
-        for text in texts:
-            tokens = str(text).split()
-            counter.update(
-                " ".join(tokens[position : position + n]) for position in range(len(tokens) - n + 1)
-            )
-
-        common = counter.most_common(top_n)
-        axis = axes[0][index]
-        if not common:
-            axis.set_visible(False)
-            continue
-
-        grams, frequencies = zip(*common, strict=True)
-        sns.barplot(
-            x=list(frequencies),
-            y=list(grams),
-            color=get_class_palette([class_name])[0],
-            ax=axis,
-        )
-        axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
-        axis.set_xlabel("Frequência")
-        axis.set_ylabel("")
+        _plot_ngram_panel(axes[0][index], texts, class_name, n, top_n)
 
     label = {1: "Unigramas", 2: "Bigramas", 3: "Trigramas"}.get(n, f"{n}-gramas")
     figure.suptitle(f"{top_n} {label} Mais Frequentes por Classe", fontweight="bold")
     figure.tight_layout()
     return figure
+
+
+def _plot_wordcloud_panel(
+    axis: Any, texts: list[str], class_name: str, wordcloud_cls: type
+) -> None:
+    """Plota a nuvem de palavras de uma classe, se houver corpus não vazio."""
+    axis.axis("off")
+    corpus = " ".join(str(text) for text in texts).strip()
+    if not corpus:
+        return
+
+    cloud = wordcloud_cls(
+        width=800,
+        height=400,
+        background_color="white",
+        colormap="viridis",
+        random_state=42,
+    ).generate(corpus)
+
+    axis.imshow(cloud, interpolation="bilinear")
+    axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
 
 
 def plot_wordcloud(tweets: pl.DataFrame, labels: pl.DataFrame) -> Any | None:
@@ -253,29 +292,13 @@ def plot_wordcloud(tweets: pl.DataFrame, labels: pl.DataFrame) -> Any | None:
         return None
 
     merged = tweets.join(labels.select(["user_id", USER_LABEL]), on="user_id", how="inner")
-    classes = [name for name in CLASS_ORDER if name in merged[USER_LABEL].unique().to_list()]
+    classes = _present_classes(merged)
 
     figure, axes = plt.subplots(1, len(classes), figsize=(7 * len(classes), 5), squeeze=False)
 
     for index, class_name in enumerate(classes):
         texts = merged.filter(pl.col(USER_LABEL) == class_name)[TEXT_CLEAN].to_list()
-        corpus = " ".join(str(text) for text in texts).strip()
-
-        axis = axes[0][index]
-        axis.axis("off")
-        if not corpus:
-            continue
-
-        cloud = WordCloud(
-            width=800,
-            height=400,
-            background_color="white",
-            colormap="viridis",
-            random_state=42,
-        ).generate(corpus)
-
-        axis.imshow(cloud, interpolation="bilinear")
-        axis.set_title(CLASS_DISPLAY_NAMES.get(class_name, class_name))
+        _plot_wordcloud_panel(axes[0][index], texts, class_name, WordCloud)
 
     figure.suptitle("Nuvens de Palavras por Classe", fontweight="bold")
     figure.tight_layout()

@@ -125,31 +125,23 @@ class ReportingStage(PipelineStage):
         )
         return figures
 
-    def _evaluation_figures(self, context: StageContext) -> dict[str, str | None]:
-        """Gera as figuras de avaliação a partir do JSON de métricas."""
-        paths = context.paths
+    def _comparison_figure(
+        self, context: StageContext, comparison_path: Path, primary: str
+    ) -> dict[str, str | None]:
+        """Gera a figura de comparação entre modelos, se a tabela existir."""
         figures: dict[str, str | None] = {}
-
-        metrics_path = paths.reports.metrics / "evaluation.json"
-        if not metrics_path.is_file():
-            logger.warning(
-                "Métricas não encontradas em %s: figuras de avaliação puladas. "
-                "Execute a etapa 'evaluate'.",
-                metrics_path,
-            )
-            return figures
-
-        payload = read_json(metrics_path)
-        models = payload.get("models", {})
-        primary = payload.get("primary_metric", "f1_macro")
-
-        comparison_path = paths.reports.tables / "model_comparison.csv"
         if comparison_path.is_file():
             comparison = pl.read_csv(comparison_path)
             figures["comparacao_modelos"] = self._save(
                 plot_model_comparison(comparison, primary), "comparacao_modelos", context
             )
+        return figures
 
+    def _per_model_figures(
+        self, context: StageContext, models: dict[str, Any], primary: str
+    ) -> dict[str, str | None]:
+        """Gera matriz de confusão, calibração e desempenho por fatia de cada modelo."""
+        figures: dict[str, str | None] = {}
         for name, result in models.items():
             if result.get("confusion_matrix"):
                 figures[f"matriz_confusao_{name}"] = self._save(
@@ -169,24 +161,66 @@ class ReportingStage(PipelineStage):
                 figures[f"fatias_{name}"] = self._save(
                     plot_slice_performance(result["slices"], primary), f"fatias_{name}", context
                 )
+        return figures
 
-        # As curvas ROC/PR exigem as probabilidades, que ficam no arquivo de
-        # predições e não no JSON resumido de métricas.
-        predictions_path = paths.reports.metrics / "predictions.csv"
-        if predictions_path.is_file() and models:
-            best = max(models, key=lambda name: models[name]["metrics"].get(primary, 0.0))
-            result = models[best]
-            proba = np.array(result.get("predictions", {}).get("y_proba", []))
-            y_true = np.array(result.get("predictions", {}).get("y_true", []))
-            if proba.size and y_true.size:
-                figures["curvas_roc"] = self._save(
-                    plot_roc_curves(y_true, proba, best), "curvas_roc", context
-                )
-                figures["curvas_precisao_revocacao"] = self._save(
-                    plot_precision_recall_curves(y_true, proba, best),
-                    "curvas_precisao_revocacao",
-                    context,
-                )
+    def _roc_pr_figures(
+        self,
+        context: StageContext,
+        predictions_path: Path,
+        models: dict[str, Any],
+        primary: str,
+    ) -> dict[str, str | None]:
+        """Gera as curvas ROC/PR do melhor modelo, a partir do arquivo de predições.
+
+        As curvas ROC/PR exigem as probabilidades, que ficam no arquivo de
+        predições e não no JSON resumido de métricas.
+        """
+        figures: dict[str, str | None] = {}
+        if not (predictions_path.is_file() and models):
+            return figures
+
+        best = max(models, key=lambda name: models[name]["metrics"].get(primary, 0.0))
+        result = models[best]
+        proba = np.array(result.get("predictions", {}).get("y_proba", []))
+        y_true = np.array(result.get("predictions", {}).get("y_true", []))
+        if proba.size and y_true.size:
+            figures["curvas_roc"] = self._save(
+                plot_roc_curves(y_true, proba, best), "curvas_roc", context
+            )
+            figures["curvas_precisao_revocacao"] = self._save(
+                plot_precision_recall_curves(y_true, proba, best),
+                "curvas_precisao_revocacao",
+                context,
+            )
+        return figures
+
+    def _evaluation_figures(self, context: StageContext) -> dict[str, str | None]:
+        """Gera as figuras de avaliação a partir do JSON de métricas."""
+        paths = context.paths
+        figures: dict[str, str | None] = {}
+
+        metrics_path = paths.reports.metrics / "evaluation.json"
+        if not metrics_path.is_file():
+            logger.warning(
+                "Métricas não encontradas em %s: figuras de avaliação puladas. "
+                "Execute a etapa 'evaluate'.",
+                metrics_path,
+            )
+            return figures
+
+        payload = read_json(metrics_path)
+        models = payload.get("models", {})
+        primary = payload.get("primary_metric", "f1_macro")
+
+        figures.update(
+            self._comparison_figure(context, paths.reports.tables / "model_comparison.csv", primary)
+        )
+        figures.update(self._per_model_figures(context, models, primary))
+        figures.update(
+            self._roc_pr_figures(
+                context, paths.reports.metrics / "predictions.csv", models, primary
+            )
+        )
 
         return figures
 

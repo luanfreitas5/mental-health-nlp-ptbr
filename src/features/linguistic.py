@@ -32,6 +32,36 @@ from utils.validation import require_columns
 logger = get_logger(__name__)
 
 
+def _annotate_lexicon_hits(
+    frame: pl.DataFrame, lexicons: dict, available: list[str]
+) -> pl.DataFrame:
+    """Anota, por tweet, se cada léxico ocorre no texto e quantas vezes."""
+    for name in available:
+        lexicon = lexicons[name]
+        frame = frame.with_columns(
+            pl.col(TEXT_CLEAN)
+            .map_elements(lexicon.contains, return_dtype=pl.Boolean)
+            .alias(f"_has_{name}"),
+            pl.col(TEXT_CLEAN)
+            .map_elements(lexicon.count, return_dtype=pl.Int64)
+            .alias(f"_hits_{name}"),
+        )
+    return frame
+
+
+def _build_lexicon_aggregations(available: list[str]) -> list[pl.Expr]:
+    """Monta as expressões de razão e média de ocorrências por léxico."""
+    aggregations: list[pl.Expr] = []
+    for name in available:
+        aggregations.extend(
+            (
+                pl.col(f"_has_{name}").mean().alias(f"{LINGUISTIC_PREFIX}{name}_ratio"),
+                pl.col(f"_hits_{name}").mean().alias(f"{LINGUISTIC_PREFIX}{name}_hits_per_tweet"),
+            )
+        )
+    return aggregations
+
+
 def compute_lexicon_ratios(tweets: pl.DataFrame, lexicon_names: list[str]) -> pl.DataFrame:
     """Calcula a proporção de tweets do usuário que contêm cada léxico.
 
@@ -64,26 +94,8 @@ def compute_lexicon_ratios(tweets: pl.DataFrame, lexicon_names: list[str]) -> pl
     if not available:
         return tweets.select(USER_ID).unique().sort(USER_ID)
 
-    frame = tweets
-    for name in available:
-        lexicon = lexicons[name]
-        frame = frame.with_columns(
-            pl.col(TEXT_CLEAN)
-            .map_elements(lexicon.contains, return_dtype=pl.Boolean)
-            .alias(f"_has_{name}"),
-            pl.col(TEXT_CLEAN)
-            .map_elements(lexicon.count, return_dtype=pl.Int64)
-            .alias(f"_hits_{name}"),
-        )
-
-    aggregations: list[pl.Expr] = []
-    for name in available:
-        aggregations.extend(
-            (
-                pl.col(f"_has_{name}").mean().alias(f"{LINGUISTIC_PREFIX}{name}_ratio"),
-                pl.col(f"_hits_{name}").mean().alias(f"{LINGUISTIC_PREFIX}{name}_hits_per_tweet"),
-            )
-        )
+    frame = _annotate_lexicon_hits(tweets, lexicons, available)
+    aggregations = _build_lexicon_aggregations(available)
 
     return frame.group_by(USER_ID).agg(aggregations).sort(USER_ID)
 
@@ -127,6 +139,23 @@ def compute_text_length(tweets: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _tokenize_user_text(texts: list[str]) -> list[str]:
+    """Tokeniza os textos de um usuário em uma lista única de tokens (sem normalização)."""
+    return [token for text in texts for token in str(text).split() if token]
+
+
+def _build_diversity_record(user_id: str, tokens: list[str]) -> dict[str, float | str]:
+    """Calcula TTR, índice de Guiraud e tamanho do vocabulário para um usuário."""
+    total = len(tokens)
+    types = len(set(tokens))
+    return {
+        USER_ID: user_id,
+        f"{LINGUISTIC_PREFIX}ttr": types / total if total else 0.0,
+        f"{LINGUISTIC_PREFIX}guiraud": types / math.sqrt(total) if total else 0.0,
+        f"{LINGUISTIC_PREFIX}vocabulary_size": float(types),
+    }
+
+
 def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
     """Calcula a diversidade lexical do histórico de cada usuário.
 
@@ -154,25 +183,54 @@ def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
     for (user_id,), user_frame in tweets.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        tokens = [
-            token
-            for text in user_frame[TEXT_CLEAN].to_list()
-            for token in str(text).split()
-            if token
-        ]
-        total = len(tokens)
-        types = len(set(tokens))
-
-        records.append(
-            {
-                USER_ID: user_id,
-                f"{LINGUISTIC_PREFIX}ttr": types / total if total else 0.0,
-                f"{LINGUISTIC_PREFIX}guiraud": types / math.sqrt(total) if total else 0.0,
-                f"{LINGUISTIC_PREFIX}vocabulary_size": float(types),
-            }
-        )
+        tokens = _tokenize_user_text(user_frame[TEXT_CLEAN].to_list())
+        records.append(_build_diversity_record(user_id, tokens))
 
     return pl.DataFrame(records).sort(USER_ID)
+
+
+def _normalize_pronoun_groups(groups: dict[str, list[str]]) -> dict[str, set[str]]:
+    """Normaliza os termos de cada grupo pronominal para comparação."""
+    return {group: {normalize_term(term) for term in terms} for group, terms in groups.items()}
+
+
+def _tokenize_user_text_normalized(texts: list[str]) -> list[str]:
+    """Tokeniza e normaliza os textos de um usuário em uma lista única de tokens."""
+    return [normalize_term(token) for text in texts for token in str(text).split() if token]
+
+
+def _count_pronoun_groups(
+    tokens: list[str], normalized_groups: dict[str, set[str]]
+) -> dict[str, int]:
+    """Conta as ocorrências de tokens em cada grupo pronominal."""
+    return {
+        group: sum(1 for token in tokens if token in terms)
+        for group, terms in normalized_groups.items()
+    }
+
+
+def _build_pronoun_record(
+    user_id: str,
+    tokens: list[str],
+    counts: dict[str, int],
+    normalized_negations: set[str],
+) -> dict[str, float | str]:
+    """Monta o registro de uso de pronomes e negação de um usuário."""
+    total = max(len(tokens), 1)
+
+    record: dict[str, float | str] = {USER_ID: user_id}
+    for group, count in counts.items():
+        record[f"{LINGUISTIC_PREFIX}pronoun_{group}"] = count / total
+
+    # +1 no denominador evita divisão por zero e satura a razão para
+    # usuários que nunca usam a primeira pessoa do plural.
+    record[f"{LINGUISTIC_PREFIX}pronoun_i_we_ratio"] = counts["first_singular"] / (
+        counts["first_plural"] + 1
+    )
+    record[f"{LINGUISTIC_PREFIX}negation_ratio"] = (
+        sum(1 for token in tokens if token in normalized_negations) / total
+    )
+    return record
 
 
 def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
@@ -201,43 +259,42 @@ def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
     """
     require_columns(tweets, [USER_ID, TEXT_CLEAN], context="uso de pronomes")
 
-    normalized_groups = {
-        group: {normalize_term(term) for term in terms} for group, terms in PRONOUN_GROUPS.items()
-    }
+    normalized_groups = _normalize_pronoun_groups(PRONOUN_GROUPS)
     normalized_negations = {normalize_term(term) for term in NEGATION_TERMS}
 
     records: list[dict[str, float | str]] = []
     for (user_id,), user_frame in tweets.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        tokens = [
-            normalize_term(token)
-            for text in user_frame[TEXT_CLEAN].to_list()
-            for token in str(text).split()
-            if token
-        ]
-        total = max(len(tokens), 1)
-
-        counts = {
-            group: sum(1 for token in tokens if token in terms)
-            for group, terms in normalized_groups.items()
-        }
-
-        record: dict[str, float | str] = {USER_ID: user_id}
-        for group, count in counts.items():
-            record[f"{LINGUISTIC_PREFIX}pronoun_{group}"] = count / total
-
-        # +1 no denominador evita divisão por zero e satura a razão para
-        # usuários que nunca usam a primeira pessoa do plural.
-        record[f"{LINGUISTIC_PREFIX}pronoun_i_we_ratio"] = counts["first_singular"] / (
-            counts["first_plural"] + 1
-        )
-        record[f"{LINGUISTIC_PREFIX}negation_ratio"] = (
-            sum(1 for token in tokens if token in normalized_negations) / total
-        )
-        records.append(record)
+        tokens = _tokenize_user_text_normalized(user_frame[TEXT_CLEAN].to_list())
+        counts = _count_pronoun_groups(tokens, normalized_groups)
+        records.append(_build_pronoun_record(user_id, tokens, counts, normalized_negations))
 
     return pl.DataFrame(records).sort(USER_ID)
+
+
+def _collect_linguistic_frames(
+    tweets: pl.DataFrame, config: LinguisticSection
+) -> list[pl.DataFrame]:
+    """Calcula os subgrupos de features linguísticas habilitados na configuração."""
+    frames: list[pl.DataFrame] = []
+    if config.lexicon_ratios:
+        frames.append(compute_lexicon_ratios(tweets, config.lexicon_ratios))
+    if config.text_length:
+        frames.append(compute_text_length(tweets))
+    if config.lexical_diversity:
+        frames.append(compute_lexical_diversity(tweets))
+    if config.pronouns:
+        frames.append(compute_pronoun_usage(tweets))
+    return frames
+
+
+def _join_linguistic_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """Une os subgrupos de features linguísticas pelo identificador de usuário."""
+    result = frames[0]
+    for frame in frames[1:]:
+        result = result.join(frame, on=USER_ID, how="full", coalesce=True)
+    return result
 
 
 def build_linguistic_features(
@@ -269,23 +326,12 @@ def build_linguistic_features(
     --------
     >>> build_linguistic_features(tweets, config.features.linguistic)  # doctest: +SKIP
     """
-    frames: list[pl.DataFrame] = []
-
-    if config.lexicon_ratios:
-        frames.append(compute_lexicon_ratios(tweets, config.lexicon_ratios))
-    if config.text_length:
-        frames.append(compute_text_length(tweets))
-    if config.lexical_diversity:
-        frames.append(compute_lexical_diversity(tweets))
-    if config.pronouns:
-        frames.append(compute_pronoun_usage(tweets))
+    frames = _collect_linguistic_frames(tweets, config)
 
     if not frames:
         return tweets.select(USER_ID).unique().sort(USER_ID)
 
-    result = frames[0]
-    for frame in frames[1:]:
-        result = result.join(frame, on=USER_ID, how="full", coalesce=True)
+    result = _join_linguistic_frames(frames)
 
     logger.info(
         "Features linguísticas: %d colunas para %d usuários.", result.width - 1, result.height

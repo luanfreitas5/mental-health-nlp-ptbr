@@ -96,6 +96,37 @@ def reduce_dimensions(
     return PCA(n_components=2, random_state=random_state).fit_transform(embeddings), "PCA"
 
 
+def _class_mask(labels: list[Any], class_name: str) -> np.ndarray:
+    """Retorna a máscara booleana dos elementos pertencentes à classe."""
+    return np.array([value == class_name for value in labels])
+
+
+def _plot_embedding_scatter(axis: Any, coordinates: np.ndarray, features: pl.DataFrame) -> None:
+    """Desenha a dispersão dos embeddings, colorida por classe quando disponível."""
+    if USER_LABEL not in features.columns:
+        axis.scatter(coordinates[:, 0], coordinates[:, 1], alpha=0.65, s=28)
+        return
+
+    labels = features[USER_LABEL].to_list()
+    classes = [name for name in CLASS_ORDER if name in set(labels)]
+    colors = get_class_palette(classes)
+    display = get_class_labels(classes)
+
+    for index, class_name in enumerate(classes):
+        mask = _class_mask(labels, class_name)
+        axis.scatter(
+            coordinates[mask, 0],
+            coordinates[mask, 1],
+            c=colors[index],
+            label=display[index],
+            alpha=0.65,
+            s=28,
+            edgecolors="white",
+            linewidths=0.4,
+        )
+    axis.legend(title="Classe")
+
+
 def plot_embedding_projection(
     features: pl.DataFrame,
     method: str = "umap",
@@ -130,28 +161,7 @@ def plot_embedding_projection(
     coordinates, used_method = reduce_dimensions(embeddings, method, random_state)
 
     figure, axis = plt.subplots(figsize=FIGURE_SIZES["square"])
-
-    if USER_LABEL in features.columns:
-        labels = features[USER_LABEL].to_list()
-        classes = [name for name in CLASS_ORDER if name in set(labels)]
-        colors = get_class_palette(classes)
-        display = get_class_labels(classes)
-
-        for index, class_name in enumerate(classes):
-            mask = np.array([value == class_name for value in labels])
-            axis.scatter(
-                coordinates[mask, 0],
-                coordinates[mask, 1],
-                c=colors[index],
-                label=display[index],
-                alpha=0.65,
-                s=28,
-                edgecolors="white",
-                linewidths=0.4,
-            )
-        axis.legend(title="Classe")
-    else:
-        axis.scatter(coordinates[:, 0], coordinates[:, 1], alpha=0.65, s=28)
+    _plot_embedding_scatter(axis, coordinates, features)
 
     axis.set_title(
         f"Projeção {used_method} dos Embeddings de Usuários\n"
@@ -161,6 +171,52 @@ def plot_embedding_projection(
     axis.set_ylabel(f"{used_method} — dimensão 2")
     figure.tight_layout()
     return figure
+
+
+def _compute_similarity_threshold(similarity: np.ndarray) -> float:
+    """Calcula o limiar do percentil 95 das similaridades positivas.
+
+    Retorna 1.0 quando não há nenhuma similaridade positiva, para que
+    nenhuma aresta seja criada.
+    """
+    if not similarity.any():
+        return 1.0
+    return float(np.percentile(similarity[similarity > 0], 95))
+
+
+def _build_similarity_graph(
+    networkx_module: Any,
+    user_ids: list[Any],
+    user_labels: list[Any],
+    similarity: np.ndarray,
+    threshold: float,
+) -> Any:
+    """Constrói o grafo de usuários ligados por similaridade acima do limiar."""
+    graph = networkx_module.Graph()
+
+    for index, user_id in enumerate(user_ids):
+        graph.add_node(user_id, label=user_labels[index])
+
+    for i in range(len(user_ids)):
+        for j in range(i + 1, len(user_ids)):
+            if similarity[i, j] >= threshold:
+                graph.add_edge(user_ids[i], user_ids[j], weight=float(similarity[i, j]))
+
+    return graph
+
+
+def _class_node_colors(graph: Any, class_order: list[str], palette: list[str]) -> list[str]:
+    """Mapeia cada nó do grafo para a cor de sua classe."""
+    color_by_class = dict(zip(class_order, palette, strict=False))
+    return [color_by_class.get(graph.nodes[node]["label"], "#8C8C8C") for node in graph]
+
+
+def _class_legend_handles(names: list[str], colors: list[str]) -> list[Line2D]:
+    """Constrói os handles de legenda para as classes."""
+    return [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=color, markersize=8, label=name)
+        for name, color in zip(names, colors, strict=False)
+    ]
 
 
 def plot_interaction_network(
@@ -225,35 +281,23 @@ def plot_interaction_network(
 
     # Limiar no percentil 95: mantém apenas as ligações mais fortes, senão o
     # grafo fica quase completo e não comunica estrutura alguma.
-    threshold = float(np.percentile(similarity[similarity > 0], 95)) if similarity.any() else 1.0
+    threshold = _compute_similarity_threshold(similarity)
 
-    graph = nx.Graph()
     user_ids = documents[USER_ID].to_list()
     user_labels = documents[USER_LABEL].to_list()
-
-    for index, user_id in enumerate(user_ids):
-        graph.add_node(user_id, label=user_labels[index])
-
-    for i in range(len(user_ids)):
-        for j in range(i + 1, len(user_ids)):
-            if similarity[i, j] >= threshold:
-                graph.add_edge(user_ids[i], user_ids[j], weight=float(similarity[i, j]))
+    graph = _build_similarity_graph(nx, user_ids, user_labels, similarity, threshold)
 
     figure, axis = plt.subplots(figsize=FIGURE_SIZES["square"])
     positions = nx.spring_layout(graph, seed=42, k=0.35)
 
-    color_by_class = dict(zip(CLASS_ORDER, get_class_palette(), strict=False))
-    node_colors = [color_by_class.get(graph.nodes[node]["label"], "#8C8C8C") for node in graph]
+    node_colors = _class_node_colors(graph, CLASS_ORDER, get_class_palette())
 
     nx.draw_networkx_edges(graph, positions, alpha=0.15, ax=axis)
     nx.draw_networkx_nodes(
         graph, positions, node_color=node_colors, node_size=60, alpha=0.85, ax=axis
     )
 
-    handles = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=color, markersize=8, label=name)
-        for name, color in zip(get_class_labels(), get_class_palette(), strict=False)
-    ]
+    handles = _class_legend_handles(get_class_labels(), get_class_palette())
     axis.legend(handles=handles, title="Classe", loc="upper right")
 
     axis.set_title(

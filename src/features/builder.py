@@ -81,6 +81,53 @@ def build_profile_columns(tweets: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _normalize_float_nan_to_null(frame: pl.DataFrame, feature_columns: list[str]) -> pl.DataFrame:
+    """Converte ``NaN`` em ``null`` nas colunas float, para uniformizar a detecção de ausência.
+
+    Colunas float podem trazer NaN (ex.: tendências temporais sem histórico
+    suficiente — ver features/temporal.py), que o Polars NÃO conta em
+    null_count(). Normalizamos para null aqui para que a detecção e a
+    imputação enxerguem os dois casos da mesma forma.
+    """
+    float_columns = [column for column in feature_columns if frame.schema[column].is_float()]
+    return frame.with_columns([pl.col(column).fill_nan(None) for column in float_columns])
+
+
+def _add_missing_indicators(
+    frame: pl.DataFrame,
+    columns_with_nulls: list[str],
+    config: FeaturesConfig,
+) -> pl.DataFrame:
+    """Cria as colunas indicadoras binárias de ausência, quando habilitado na configuração."""
+    if not (config.aggregation.add_missing_indicators and columns_with_nulls):
+        return frame
+
+    result = frame.with_columns(
+        [
+            pl.col(column).is_null().cast(pl.Float64).alias(f"{column}{MISSING_INDICATOR_SUFFIX}")
+            for column in columns_with_nulls
+        ]
+    )
+    logger.info("Criados %d indicadores de ausência.", len(columns_with_nulls))
+    return result
+
+
+def _impute_missing(frame: pl.DataFrame, feature_columns: list[str], strategy: str) -> pl.DataFrame:
+    """Aplica a estratégia de imputação configurada às colunas de atributos."""
+    if strategy == "keep_nan":
+        return frame
+
+    if strategy == "zero":
+        return frame.with_columns([pl.col(column).fill_null(0.0) for column in feature_columns])
+
+    return frame.with_columns(
+        [
+            pl.col(column).fill_null(pl.col(column).median()).fill_null(0.0)
+            for column in feature_columns
+        ]
+    )
+
+
 def handle_missing_values(
     frame: pl.DataFrame,
     config: FeaturesConfig,
@@ -116,40 +163,109 @@ def handle_missing_values(
     if not feature_columns:
         return frame
 
-    # Colunas float podem trazer NaN (ex.: tendências temporais sem histórico
-    # suficiente — ver features/temporal.py), que o Polars NÃO conta em
-    # null_count(). Normalizamos para null aqui para que a detecção e a
-    # imputação abaixo enxerguem os dois casos da mesma forma.
-    float_columns = [column for column in feature_columns if frame.schema[column].is_float()]
-    result = frame.with_columns([pl.col(column).fill_nan(None) for column in float_columns])
-
+    result = _normalize_float_nan_to_null(frame, feature_columns)
     with_nulls = [column for column in feature_columns if result[column].null_count() > 0]
+    result = _add_missing_indicators(result, with_nulls, config)
 
-    if config.aggregation.add_missing_indicators and with_nulls:
-        result = result.with_columns(
-            [
-                pl.col(column)
-                .is_null()
-                .cast(pl.Float64)
-                .alias(f"{column}{MISSING_INDICATOR_SUFFIX}")
-                for column in with_nulls
-            ]
+    return _impute_missing(result, feature_columns, config.aggregation.missing_strategy)
+
+
+def _join_linguistic_group(
+    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
+) -> pl.DataFrame:
+    """Une o grupo de features linguísticas, quando habilitado."""
+    if "linguistic" in enabled:
+        return result.join(
+            build_linguistic_features(tweets, config.linguistic), on=USER_ID, how="left"
         )
-        logger.info("Criados %d indicadores de ausência.", len(with_nulls))
+    return result
 
-    strategy = config.aggregation.missing_strategy
-    if strategy == "keep_nan":
-        return result
 
-    if strategy == "zero":
-        return result.with_columns([pl.col(column).fill_null(0.0) for column in feature_columns])
+def _join_emotional_group(
+    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
+) -> pl.DataFrame:
+    """Une o grupo de features emocionais, quando habilitado."""
+    if "emotional" in enabled:
+        return result.join(
+            build_emotional_features(tweets, config.emotional), on=USER_ID, how="left"
+        )
+    return result
 
-    return result.with_columns(
-        [
-            pl.col(column).fill_null(pl.col(column).median()).fill_null(0.0)
-            for column in feature_columns
-        ]
-    )
+
+def _join_temporal_group(
+    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
+) -> pl.DataFrame:
+    """Une o grupo de features temporais, quando habilitado."""
+    if "temporal" in enabled:
+        return result.join(build_temporal_features(tweets, config.temporal), on=USER_ID, how="left")
+    return result
+
+
+def _join_behavioral_group(
+    result: pl.DataFrame,
+    tweets: pl.DataFrame,
+    enabled: set[str],
+    config: FeaturesConfig,
+    metadata: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """Une o grupo de features comportamentais, quando habilitado."""
+    if "behavioral" in enabled:
+        return result.join(
+            build_behavioral_features(tweets, metadata, config.behavioral),
+            on=USER_ID,
+            how="left",
+        )
+    return result
+
+
+def _join_semantic_group(
+    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
+) -> pl.DataFrame:
+    """Une o grupo de features semânticas, quando habilitado."""
+    if "semantic" in enabled and config.semantic.enabled:
+        return result.join(build_semantic_features(tweets, config.semantic), on=USER_ID, how="left")
+    return result
+
+
+def _join_psychological_group(
+    result: pl.DataFrame,
+    enabled: set[str],
+    config: FeaturesConfig,
+    psychological_scores: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """Une o grupo de features psicológicas, quando habilitado."""
+    if "psychological" in enabled and config.psychological.enabled:
+        scores = psychological_scores if psychological_scores is not None else pl.DataFrame()
+        return result.join(
+            build_psychological_features(scores, config.psychological),
+            on=USER_ID,
+            how="left",
+        )
+    return result
+
+
+def _promote_night_activity_column(result: pl.DataFrame) -> pl.DataFrame:
+    """Promove a razão de atividade noturna a coluna de perfil, quando presente.
+
+    Sustenta uma das fatias de avaliação em configs/evaluation.yaml.
+    """
+    night_column = f"{TEMPORAL_PREFIX}night_activity_ratio"
+    if night_column in result.columns:
+        return result.with_columns(pl.col(night_column).alias(NIGHT_ACTIVITY_RATIO))
+    return result
+
+
+def _filter_min_tweets(result: pl.DataFrame, minimum: int) -> pl.DataFrame:
+    """Remove usuários abaixo do mínimo de tweets configurado, registrando o total removido."""
+    before = result.height
+    result = result.filter(pl.col(N_TWEETS) >= minimum)
+    if before != result.height:
+        logger.debug(
+            "%d usuário(s) removido(s) por terem menos de %d tweets.",
+            before - result.height,
+            minimum,
+        )
+    return result
 
 
 def build_user_features_raw(
@@ -198,51 +314,15 @@ def build_user_features_raw(
     result = build_profile_columns(tweets)
 
     with log_duration("Construção da matriz de atributos"):
-        if "linguistic" in enabled:
-            result = result.join(
-                build_linguistic_features(tweets, config.linguistic), on=USER_ID, how="left"
-            )
-        if "emotional" in enabled:
-            result = result.join(
-                build_emotional_features(tweets, config.emotional), on=USER_ID, how="left"
-            )
-        if "temporal" in enabled:
-            result = result.join(
-                build_temporal_features(tweets, config.temporal), on=USER_ID, how="left"
-            )
-        if "behavioral" in enabled:
-            result = result.join(
-                build_behavioral_features(tweets, metadata, config.behavioral),
-                on=USER_ID,
-                how="left",
-            )
-        if "semantic" in enabled and config.semantic.enabled:
-            result = result.join(
-                build_semantic_features(tweets, config.semantic), on=USER_ID, how="left"
-            )
-        if "psychological" in enabled and config.psychological.enabled:
-            scores = psychological_scores if psychological_scores is not None else pl.DataFrame()
-            result = result.join(
-                build_psychological_features(scores, config.psychological),
-                on=USER_ID,
-                how="left",
-            )
+        result = _join_linguistic_group(result, tweets, enabled, config)
+        result = _join_emotional_group(result, tweets, enabled, config)
+        result = _join_temporal_group(result, tweets, enabled, config)
+        result = _join_behavioral_group(result, tweets, enabled, config, metadata)
+        result = _join_semantic_group(result, tweets, enabled, config)
+        result = _join_psychological_group(result, enabled, config, psychological_scores)
 
-    # A razão de atividade noturna é promovida a coluna de perfil: define uma
-    # das fatias de avaliação em configs/evaluation.yaml.
-    night_column = f"{TEMPORAL_PREFIX}night_activity_ratio"
-    if night_column in result.columns:
-        result = result.with_columns(pl.col(night_column).alias(NIGHT_ACTIVITY_RATIO))
-
-    minimum = config.aggregation.min_tweets_per_user
-    before = result.height
-    result = result.filter(pl.col(N_TWEETS) >= minimum)
-    if before != result.height:
-        logger.debug(
-            "%d usuário(s) removido(s) por terem menos de %d tweets.",
-            before - result.height,
-            minimum,
-        )
+    result = _promote_night_activity_column(result)
+    result = _filter_min_tweets(result, config.aggregation.min_tweets_per_user)
 
     return result.sort(USER_ID)
 
@@ -354,6 +434,25 @@ def build_user_features(
     return finalize_user_features(raw, config, labels=labels)
 
 
+def _select_key_columns(frame: pl.DataFrame) -> list[str]:
+    """Seleciona as colunas-chave (identificador, rótulo e perfil) presentes na matriz."""
+    return [
+        column
+        for column in (USER_ID, USER_LABEL, N_TWEETS, SPAN_DAYS, ACTIVE_DAYS, NIGHT_ACTIVITY_RATIO)
+        if column in frame.columns
+    ]
+
+
+def _select_missing_indicators(frame: pl.DataFrame, features: list[str]) -> list[str]:
+    """Seleciona os indicadores de ausência que acompanham as features escolhidas."""
+    return [
+        column
+        for column in frame.columns
+        if column.endswith(MISSING_INDICATOR_SUFFIX)
+        and column.removesuffix(MISSING_INDICATOR_SUFFIX) in features
+    ]
+
+
 def select_groups(frame: pl.DataFrame, groups: list[str]) -> pl.DataFrame:
     """Seleciona a matriz restrita a determinados grupos de atributos.
 
@@ -377,19 +476,10 @@ def select_groups(frame: pl.DataFrame, groups: list[str]) -> pl.DataFrame:
     --------
     >>> select_groups(matriz, ["emotional", "temporal"])  # doctest: +SKIP
     """
-    keys = [
-        column
-        for column in (USER_ID, USER_LABEL, N_TWEETS, SPAN_DAYS, ACTIVE_DAYS, NIGHT_ACTIVITY_RATIO)
-        if column in frame.columns
-    ]
+    keys = _select_key_columns(frame)
     features = list_feature_columns(frame, groups)
 
     # Os indicadores de ausência acompanham o grupo da coluna que sinalizam.
-    indicators = [
-        column
-        for column in frame.columns
-        if column.endswith(MISSING_INDICATOR_SUFFIX)
-        and column.removesuffix(MISSING_INDICATOR_SUFFIX) in features
-    ]
+    indicators = _select_missing_indicators(frame, features)
 
     return frame.select([*keys, *features, *indicators])

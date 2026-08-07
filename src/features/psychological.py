@@ -23,6 +23,64 @@ from utils.validation import require_columns
 logger = get_logger(__name__)
 
 
+def _build_dimension_aggregations(
+    scores: pl.DataFrame, config: PsychologicalSection
+) -> pl.DataFrame:
+    """Agrega estatísticas por dimensão psicológica e conta os lotes por usuário.
+
+    Raises
+    ------
+    KeyError
+        Se alguma dimensão configurada não existir nos scores.
+    """
+    missing = [dimension for dimension in config.dimensions if dimension not in scores.columns]
+    if missing:
+        raise KeyError(
+            f"Dimensões psicológicas ausentes nos scores: {missing}. "
+            f"Disponíveis: {sorted(scores.columns)}"
+        )
+
+    expressions: list[pl.Expr] = []
+    for dimension in config.dimensions:
+        expressions.extend(build_aggregations(dimension, config.aggregations, PSYCHOLOGICAL_PREFIX))
+    expressions.append(pl.len().alias(f"{PSYCHOLOGICAL_PREFIX}n_batches"))
+
+    return scores.group_by(USER_ID).agg(expressions).sort(USER_ID)
+
+
+def _select_negative_dimension_columns(result: pl.DataFrame) -> list[str]:
+    """Seleciona as colunas de dimensões psicológicas negativas presentes na matriz."""
+    return [
+        f"{PSYCHOLOGICAL_PREFIX}{dimension}_mean"
+        for dimension in ("tristeza", "isolamento", "ansiedade", "risco_suicida")
+        if f"{PSYCHOLOGICAL_PREFIX}{dimension}_mean" in result.columns
+    ]
+
+
+def _build_risk_composite(result: pl.DataFrame, negative: list[str]) -> pl.Expr:
+    """Combina as dimensões negativas e desconta a esperança, quando presente na matriz."""
+    hope = f"{PSYCHOLOGICAL_PREFIX}esperanca_mean"
+    composite = pl.mean_horizontal([pl.col(column) for column in negative])
+    if hope in result.columns:
+        composite = composite - pl.col(hope)
+    return composite
+
+
+def _add_risk_index(result: pl.DataFrame) -> pl.DataFrame:
+    """Adiciona o índice composto de risco, combinando dimensões negativas e esperança.
+
+    Índice composto de risco: combina as dimensões negativas e desconta a
+    esperança, que é a única dimensão positiva do vetor. Resume o vetor num
+    único número interpretável para figuras e para o model card.
+    """
+    negative = _select_negative_dimension_columns(result)
+    if not negative:
+        return result
+
+    composite = _build_risk_composite(result, negative)
+    return result.with_columns(composite.alias(f"{PSYCHOLOGICAL_PREFIX}risk_index"))
+
+
 def build_psychological_features(
     scores: pl.DataFrame,
     config: PsychologicalSection,
@@ -59,36 +117,8 @@ def build_psychological_features(
 
     require_columns(scores, [USER_ID], context="features psicológicas")
 
-    missing = [dimension for dimension in config.dimensions if dimension not in scores.columns]
-    if missing:
-        raise KeyError(
-            f"Dimensões psicológicas ausentes nos scores: {missing}. "
-            f"Disponíveis: {sorted(scores.columns)}"
-        )
-
-    expressions: list[pl.Expr] = []
-    for dimension in config.dimensions:
-        expressions.extend(build_aggregations(dimension, config.aggregations, PSYCHOLOGICAL_PREFIX))
-
-    expressions.append(pl.len().alias(f"{PSYCHOLOGICAL_PREFIX}n_batches"))
-
-    result = scores.group_by(USER_ID).agg(expressions).sort(USER_ID)
-
-    # Índice composto de risco: combina as dimensões negativas e desconta a
-    # esperança, que é a única dimensão positiva do vetor. Resume o vetor num
-    # único número interpretável para figuras e para o model card.
-    negative = [
-        f"{PSYCHOLOGICAL_PREFIX}{dimension}_mean"
-        for dimension in ("tristeza", "isolamento", "ansiedade", "risco_suicida")
-        if f"{PSYCHOLOGICAL_PREFIX}{dimension}_mean" in result.columns
-    ]
-    hope = f"{PSYCHOLOGICAL_PREFIX}esperanca_mean"
-
-    if negative:
-        composite = pl.mean_horizontal([pl.col(column) for column in negative])
-        if hope in result.columns:
-            composite = composite - pl.col(hope)
-        result = result.with_columns(composite.alias(f"{PSYCHOLOGICAL_PREFIX}risk_index"))
+    result = _build_dimension_aggregations(scores, config)
+    result = _add_risk_index(result)
 
     logger.info(
         "Features psicológicas: %d colunas para %d usuários.", result.width - 1, result.height

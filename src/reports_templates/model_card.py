@@ -33,53 +33,43 @@ def _format(value: Any, precision: int = 4) -> str:
     return str(value)
 
 
-def build_model_card(
-    evaluation: dict[str, Any],
-    config: Config,
-    paths: ProjectPaths,
-) -> str:
-    """Monta o Model Card em Markdown.
+def _select_best_model(evaluation: dict[str, Any], primary: str) -> tuple[str, dict[str, Any]]:
+    """Seleciona o modelo com melhor valor da métrica principal.
 
     Parameters
     ----------
     evaluation : dict
         Conteúdo de ``reports/metrics/evaluation.json``.
-    config : Config
-        Configuração completa do projeto.
-    paths : ProjectPaths
-        Caminhos do projeto.
+    primary : str
+        Nome da métrica principal.
 
     Returns
     -------
-    str
-        Model Card em Markdown.
-
-    Examples
-    --------
-    >>> build_model_card(metricas, config, paths)[:14]  # doctest: +SKIP
-    '# Model Card'
+    tuple
+        ``(nome_do_melhor_modelo, dados_do_modelo)``.
     """
-    version = describe_version()
-    primary = config.evaluation.metrics.primary
     models = evaluation.get("models", {})
-
     best_name = (
         max(models, key=lambda name: models[name]["metrics"].get(primary, float("-inf")))
         if models
         else "—"
     )
-    best = models.get(best_name, {})
-    metrics = best.get("metrics", {})
-    per_class = best.get("per_class", {})
-    calibration = best.get("calibration", {})
-    interval = best.get("confidence_interval", {})
+    return best_name, models.get(best_name, {})
 
-    labeling_quality = {}
+
+def _load_labeling_quality(paths: ProjectPaths) -> dict[str, Any]:
+    """Carrega o relatório de qualidade dos rótulos, se existir."""
     quality_path = paths.reports.metrics / "labeling_quality.json"
     if quality_path.is_file():
-        labeling_quality = read_json(quality_path)
+        return read_json(quality_path)
+    return {}
 
-    lines: list[str] = [
+
+def _build_header_lines(
+    config: Config, best_name: str, primary: str, version: dict[str, str]
+) -> list[str]:
+    """Monta o cabeçalho e as seções 1–3 (detalhes, uso pretendido, dados de treino)."""
+    return [
         f"# Model Card — {config.general.project.name}",
         "",
         f"**Modelo:** `{best_name}`  ",
@@ -137,60 +127,71 @@ def build_model_card(
         "",
     ]
 
-    if labeling_quality:
-        agreement = labeling_quality.get("concordancia_revisao_manual", {})
-        lines.extend(
-            [
-                "### Qualidade dos rótulos",
-                "",
-                f"- Usuários rotulados: {labeling_quality.get('n_usuarios_rotulados', '—')}",
-                f"- Concordância média entre fontes: "
-                f"{_format(labeling_quality.get('concordancia_media_fontes'))}",
-                f"- Revisão manual: {int(agreement.get('n_revisados', 0))} usuários, "
-                f"kappa de Cohen = {_format(agreement.get('kappa_cohen'))}",
-                "",
-                "> O kappa delimita o teto de desempenho alcançável: nenhum modelo pode "
-                "superar consistentemente a qualidade do rótulo com que foi treinado.",
-                "",
-            ]
-        )
 
-    lines.extend(
-        [
-            "## 4. Desempenho",
-            "",
-            "### Métricas agregadas (conjunto de teste)",
-            "",
-            "| Métrica | Valor |",
-            "| --- | --- |",
-        ]
-    )
+def _build_labeling_quality_lines(labeling_quality: dict[str, Any]) -> list[str]:
+    """Monta a subseção de qualidade dos rótulos, se o relatório existir."""
+    if not labeling_quality:
+        return []
+
+    agreement = labeling_quality.get("concordancia_revisao_manual", {})
+    return [
+        "### Qualidade dos rótulos",
+        "",
+        f"- Usuários rotulados: {labeling_quality.get('n_usuarios_rotulados', '—')}",
+        f"- Concordância média entre fontes: "
+        f"{_format(labeling_quality.get('concordancia_media_fontes'))}",
+        f"- Revisão manual: {int(agreement.get('n_revisados', 0))} usuários, "
+        f"kappa de Cohen = {_format(agreement.get('kappa_cohen'))}",
+        "",
+        "> O kappa delimita o teto de desempenho alcançável: nenhum modelo pode "
+        "superar consistentemente a qualidade do rótulo com que foi treinado.",
+        "",
+    ]
+
+
+def _build_metrics_table_lines(config: Config, metrics: dict[str, Any]) -> list[str]:
+    """Monta a tabela de métricas agregadas do conjunto de teste."""
+    lines = [
+        "## 4. Desempenho",
+        "",
+        "### Métricas agregadas (conjunto de teste)",
+        "",
+        "| Métrica | Valor |",
+        "| --- | --- |",
+    ]
     lines.extend(
         f"| {METRIC_DISPLAY_NAMES.get(metric, metric)} | {_format(metrics[metric])} |"
         for metric in config.evaluation.metrics.compute
         if metric in metrics
     )
+    return lines
 
-    if interval:
-        lines.extend(
-            [
-                "",
-                f"**{METRIC_DISPLAY_NAMES.get(primary, primary)} com IC "
-                f"{config.evaluation.uncertainty.confidence_level:.0%}:** "
-                f"{_format(interval.get('point'))} "
-                f"[{_format(interval.get('lower'))}; {_format(interval.get('upper'))}]",
-                "",
-            ]
-        )
 
-    lines.extend(
-        [
-            "### Desempenho por classe",
-            "",
-            "| Classe | Precisão | Revocação | F1 | Suporte |",
-            "| --- | --- | --- | --- | --- |",
-        ]
-    )
+def _build_confidence_interval_lines(
+    config: Config, primary: str, interval: dict[str, Any]
+) -> list[str]:
+    """Monta a linha do intervalo de confiança da métrica principal, se disponível."""
+    if not interval:
+        return []
+
+    return [
+        "",
+        f"**{METRIC_DISPLAY_NAMES.get(primary, primary)} com IC "
+        f"{config.evaluation.uncertainty.confidence_level:.0%}:** "
+        f"{_format(interval.get('point'))} "
+        f"[{_format(interval.get('lower'))}; {_format(interval.get('upper'))}]",
+        "",
+    ]
+
+
+def _build_per_class_table_lines(per_class: dict[str, Any]) -> list[str]:
+    """Monta a tabela de desempenho por classe."""
+    lines = [
+        "### Desempenho por classe",
+        "",
+        "| Classe | Precisão | Revocação | F1 | Suporte |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for class_name in CLASS_ORDER:
         entry = per_class.get(class_name, {})
         lines.append(
@@ -207,87 +208,143 @@ def build_model_card(
             "",
         ]
     )
+    return lines
 
-    if calibration:
-        lines.extend(
-            [
-                "### Calibração",
-                "",
-                f"- Brier score: {_format(calibration.get('brier_score'))}",
-                f"- Erro de calibração esperado (ECE): "
-                f"{_format(calibration.get('expected_calibration_error'))}",
-                "",
-                calibration.get("interpretation", ""),
-                "",
-            ]
-        )
 
-    slices = best.get("slices", {})
-    if slices:
-        lines.extend(["### Desempenho por subgrupo", ""])
-        for name, data in slices.items():
-            gap = data.get("gap", 0.0)
-            marker = " ⚠️" if data.get("exceeds_threshold") else ""
-            lines.append(f"- **{name}:** disparidade de {_format(gap)}{marker}")
-        lines.extend(
-            [
-                "",
-                "> **Sobre fairness demográfica:** o projeto não coleta sexo, idade, raça ou "
-                "região, por minimização de dados (LGPD). Uma auditoria demográfica exigiria "
-                "coletar exatamente a informação sensível que se optou por não coletar. As "
-                "fatias acima são **comportamentais** — é a auditoria que os dados "
-                "disponíveis permitem fazer honestamente, e essa é uma limitação declarada.",
-                "",
-            ]
-        )
+def _build_calibration_lines(calibration: dict[str, Any]) -> list[str]:
+    """Monta a subseção de calibração, se disponível."""
+    if not calibration:
+        return []
 
+    return [
+        "### Calibração",
+        "",
+        f"- Brier score: {_format(calibration.get('brier_score'))}",
+        f"- Erro de calibração esperado (ECE): "
+        f"{_format(calibration.get('expected_calibration_error'))}",
+        "",
+        calibration.get("interpretation", ""),
+        "",
+    ]
+
+
+def _build_slices_lines(slices: dict[str, Any]) -> list[str]:
+    """Monta a subseção de desempenho por subgrupo comportamental, se disponível."""
+    if not slices:
+        return []
+
+    lines = ["### Desempenho por subgrupo", ""]
+    for name, data in slices.items():
+        gap = data.get("gap", 0.0)
+        marker = " ⚠️" if data.get("exceeds_threshold") else ""
+        lines.append(f"- **{name}:** disparidade de {_format(gap)}{marker}")
     lines.extend(
         [
-            "## 5. Limitações",
             "",
-            "- **Viés de seleção na classe controle.** O rótulo `controle` significa *sem "
-            "sinais detectados no recorte coletado*, não ausência clínica confirmada. "
-            "Postar sobre temas neutros não garante ausência de sofrimento psíquico.",
-            "- **Rótulos ruidosos.** A supervisão fraca introduz erro; parte dos erros do "
-            "modelo é, na verdade, erro do rótulo.",
-            "- **Autosseleção da plataforma.** Usuários do X/Twitter que escrevem "
-            "publicamente sobre sofrimento não representam a população geral.",
-            "- **Ironia e sarcasmo.** Frequentes na plataforma e sistematicamente difíceis "
-            "para modelos de linguagem; letras de música e citações produzem falsos positivos.",
-            "- **Deriva temporal.** Vocabulário de rede social muda rápido; o desempenho "
-            "tende a degradar em dados posteriores à janela de coleta.",
-            "- **Sem validação clínica.** Nenhum rótulo foi confirmado por profissional de "
-            "saúde mental nem por instrumento psicométrico validado.",
-            "",
-            "## 6. Considerações éticas",
-            "",
-            "- Todos os identificadores diretos são pseudonimizados por SHA-256 com salt na "
-            "ingestão; nenhum handle é persistido.",
-            "- Menções, URLs, e-mails e telefones são removidos do texto e filtrados também "
-            "nos logs.",
-            "- O processamento por LLM é **local** (Ollama): nenhum texto sensível é enviado "
-            "a serviços de terceiros.",
-            "- A coleta é bloqueada por barreira técnica enquanto não houver aprovação "
-            "CEP/CONEP registrada.",
-            "- **Risco de uso indevido:** um modelo que sinaliza risco de suicídio pode ser "
-            "usado para vigilância ou estigmatização. Por isso o escopo de uso é restrito à "
-            "pesquisa, e os dados não são redistribuídos.",
-            "",
-            "## 7. Recomendações",
-            "",
-            "- Nunca use a saída do modelo isoladamente para tomar decisão sobre uma pessoa.",
-            "- Em qualquer aplicação, mantenha revisão humana e um canal de encaminhamento "
-            "para atendimento profissional (no Brasil, CVV — 188, 24 h, gratuito).",
-            "- Reavalie o desempenho antes de aplicar o modelo a dados de período, "
-            "plataforma ou população diferentes.",
-            "- Monitore deriva de dados e reavalie periodicamente com rótulos novos.",
-            "",
-            "---",
-            "",
-            f"*Gerado automaticamente por `{__name__}` em "
-            f"{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC.*",
+            "> **Sobre fairness demográfica:** o projeto não coleta sexo, idade, raça ou "
+            "região, por minimização de dados (LGPD). Uma auditoria demográfica exigiria "
+            "coletar exatamente a informação sensível que se optou por não coletar. As "
+            "fatias acima são **comportamentais** — é a auditoria que os dados "
+            "disponíveis permitem fazer honestamente, e essa é uma limitação declarada.",
             "",
         ]
     )
+    return lines
+
+
+def _build_footer_lines() -> list[str]:
+    """Monta as seções 5–7 (limitações, considerações éticas, recomendações) e o rodapé."""
+    return [
+        "## 5. Limitações",
+        "",
+        "- **Viés de seleção na classe controle.** O rótulo `controle` significa *sem "
+        "sinais detectados no recorte coletado*, não ausência clínica confirmada. "
+        "Postar sobre temas neutros não garante ausência de sofrimento psíquico.",
+        "- **Rótulos ruidosos.** A supervisão fraca introduz erro; parte dos erros do "
+        "modelo é, na verdade, erro do rótulo.",
+        "- **Autosseleção da plataforma.** Usuários do X/Twitter que escrevem "
+        "publicamente sobre sofrimento não representam a população geral.",
+        "- **Ironia e sarcasmo.** Frequentes na plataforma e sistematicamente difíceis "
+        "para modelos de linguagem; letras de música e citações produzem falsos positivos.",
+        "- **Deriva temporal.** Vocabulário de rede social muda rápido; o desempenho "
+        "tende a degradar em dados posteriores à janela de coleta.",
+        "- **Sem validação clínica.** Nenhum rótulo foi confirmado por profissional de "
+        "saúde mental nem por instrumento psicométrico validado.",
+        "",
+        "## 6. Considerações éticas",
+        "",
+        "- Todos os identificadores diretos são pseudonimizados por SHA-256 com salt na "
+        "ingestão; nenhum handle é persistido.",
+        "- Menções, URLs, e-mails e telefones são removidos do texto e filtrados também nos logs.",
+        "- O processamento por LLM é **local** (Ollama): nenhum texto sensível é enviado "
+        "a serviços de terceiros.",
+        "- A coleta é bloqueada por barreira técnica enquanto não houver aprovação "
+        "CEP/CONEP registrada.",
+        "- **Risco de uso indevido:** um modelo que sinaliza risco de suicídio pode ser "
+        "usado para vigilância ou estigmatização. Por isso o escopo de uso é restrito à "
+        "pesquisa, e os dados não são redistribuídos.",
+        "",
+        "## 7. Recomendações",
+        "",
+        "- Nunca use a saída do modelo isoladamente para tomar decisão sobre uma pessoa.",
+        "- Em qualquer aplicação, mantenha revisão humana e um canal de encaminhamento "
+        "para atendimento profissional (no Brasil, CVV — 188, 24 h, gratuito).",
+        "- Reavalie o desempenho antes de aplicar o modelo a dados de período, "
+        "plataforma ou população diferentes.",
+        "- Monitore deriva de dados e reavalie periodicamente com rótulos novos.",
+        "",
+        "---",
+        "",
+        f"*Gerado automaticamente por `{__name__}` em "
+        f"{datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC.*",
+        "",
+    ]
+
+
+def build_model_card(
+    evaluation: dict[str, Any],
+    config: Config,
+    paths: ProjectPaths,
+) -> str:
+    """Monta o Model Card em Markdown.
+
+    Parameters
+    ----------
+    evaluation : dict
+        Conteúdo de ``reports/metrics/evaluation.json``.
+    config : Config
+        Configuração completa do projeto.
+    paths : ProjectPaths
+        Caminhos do projeto.
+
+    Returns
+    -------
+    str
+        Model Card em Markdown.
+
+    Examples
+    --------
+    >>> build_model_card(metricas, config, paths)[:14]  # doctest: +SKIP
+    '# Model Card'
+    """
+    version = describe_version()
+    primary = config.evaluation.metrics.primary
+
+    best_name, best = _select_best_model(evaluation, primary)
+    metrics = best.get("metrics", {})
+    per_class = best.get("per_class", {})
+    calibration = best.get("calibration", {})
+    interval = best.get("confidence_interval", {})
+
+    labeling_quality = _load_labeling_quality(paths)
+
+    lines = _build_header_lines(config, best_name, primary, version)
+    lines.extend(_build_labeling_quality_lines(labeling_quality))
+    lines.extend(_build_metrics_table_lines(config, metrics))
+    lines.extend(_build_confidence_interval_lines(config, primary, interval))
+    lines.extend(_build_per_class_table_lines(per_class))
+    lines.extend(_build_calibration_lines(calibration))
+    lines.extend(_build_slices_lines(best.get("slices", {})))
+    lines.extend(_build_footer_lines())
 
     return "\n".join(lines)

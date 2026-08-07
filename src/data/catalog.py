@@ -166,6 +166,32 @@ def write_dataset_manifest(paths: ProjectPaths, extra: dict[str, Any] | None = N
     return target
 
 
+def _classify_artifact_change(old_hash: str | None, new_hash: str | None) -> str:
+    """Classifica a mudança de um artefato a partir dos hashes anterior e atual."""
+    if old_hash and new_hash:
+        return "inalterado" if old_hash == new_hash else "alterado"
+    if new_hash:
+        return "novo"
+    return "removido"
+
+
+def _build_artifact_changes(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, str]:
+    """Compara os hashes anterior e atual de cada artefato e classifica cada mudança."""
+    changes: dict[str, str] = {}
+    for name in sorted(set(previous) | set(current)):
+        old = previous.get(name, {}).get("sha256")
+        new = current.get(name, {}).get("sha256")
+        changes[name] = _classify_artifact_change(old, new)
+    return changes
+
+
+def _warn_if_artifacts_modified(changes: dict[str, str]) -> None:
+    """Registra um aviso no log se algum artefato foi alterado desde o manifesto anterior."""
+    modified = [name for name, state in changes.items() if state == "alterado"]
+    if modified:
+        logger.warning("Artefatos alterados desde o último manifesto: %s.", modified)
+
+
 def compare_manifest(paths: ProjectPaths) -> dict[str, str]:
     """Compara os artefatos atuais com o manifesto gravado.
 
@@ -200,19 +226,6 @@ def compare_manifest(paths: ProjectPaths) -> dict[str, str]:
         {name: status.path for name, status in catalog.items() if status.exists}
     )
 
-    changes: dict[str, str] = {}
-    for name in sorted(set(previous) | set(current)):
-        old = previous.get(name, {}).get("sha256")
-        new = current.get(name, {}).get("sha256")
-        if old and new:
-            changes[name] = "inalterado" if old == new else "alterado"
-        elif new:
-            changes[name] = "novo"
-        else:
-            changes[name] = "removido"
-
-    modified = [name for name, state in changes.items() if state == "alterado"]
-    if modified:
-        logger.warning("Artefatos alterados desde o último manifesto: %s.", modified)
-
+    changes = _build_artifact_changes(previous, current)
+    _warn_if_artifacts_modified(changes)
     return changes

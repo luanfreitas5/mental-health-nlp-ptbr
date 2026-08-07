@@ -72,8 +72,19 @@ def list_feature_columns(frame: pl.DataFrame, groups: list[str] | None = None) -
     >>> list_feature_columns(frame, ["linguistic"])
     ['ling_len']
     """
-    selected = groups if groups is not None else list(FEATURE_GROUP_PREFIXES)
+    selected = _resolve_selected_groups(groups)
+    _validate_known_groups(selected)
+    prefixes = tuple(FEATURE_GROUP_PREFIXES[group] for group in selected)
+    return _select_columns_by_prefix(frame, prefixes)
 
+
+def _resolve_selected_groups(groups: list[str] | None) -> list[str]:
+    """Resolve os grupos solicitados, usando todos os grupos conhecidos por padrão."""
+    return groups if groups is not None else list(FEATURE_GROUP_PREFIXES)
+
+
+def _validate_known_groups(selected: list[str]) -> None:
+    """Garante que todos os grupos solicitados são conhecidos em ``FEATURE_GROUP_PREFIXES``."""
     unknown = [group for group in selected if group not in FEATURE_GROUP_PREFIXES]
     if unknown:
         raise KeyError(
@@ -81,7 +92,9 @@ def list_feature_columns(frame: pl.DataFrame, groups: list[str] | None = None) -
             f"Conhecidos: {sorted(FEATURE_GROUP_PREFIXES)}"
         )
 
-    prefixes = tuple(FEATURE_GROUP_PREFIXES[group] for group in selected)
+
+def _select_columns_by_prefix(frame: pl.DataFrame, prefixes: tuple[str, ...]) -> list[str]:
+    """Seleciona, em ordem determinística, as colunas com um dos prefixos informados."""
     return sorted(
         column
         for column in frame.columns
@@ -127,12 +140,31 @@ def validate_feature_matrix(
     >>> validate_feature_matrix(frame, expected_groups=["linguistic"]).height
     1
     """
+    _validate_user_id_present(frame)
+    _validate_expected_groups_present(frame, expected_groups)
+
+    feature_columns = list_feature_columns(frame)
+    _validate_has_feature_columns(feature_columns)
+
+    if not allow_nan:
+        _validate_finite_feature_values(frame, feature_columns)
+
+    return frame
+
+
+def _validate_user_id_present(frame: pl.DataFrame) -> None:
+    """Garante que a coluna de identificação do usuário existe na matriz."""
     if USER_ID not in frame.columns:
         raise SchemaValidationError(
             f"Matriz de atributos sem a coluna '{USER_ID}': impossível associar "
             "features aos rótulos."
         )
 
+
+def _validate_expected_groups_present(
+    frame: pl.DataFrame, expected_groups: list[str] | None
+) -> None:
+    """Garante que cada grupo de atributos esperado contribui com ao menos uma coluna."""
     for group in expected_groups or []:
         if not list_feature_columns(frame, [group]):
             raise SchemaValidationError(
@@ -140,28 +172,35 @@ def validate_feature_matrix(
                 f"Verifique se features.groups.{group} está ativo em configs/features.yaml."
             )
 
-    feature_columns = list_feature_columns(frame)
+
+def _validate_has_feature_columns(feature_columns: list[str]) -> None:
+    """Garante que a matriz contém ao menos uma coluna de atributos."""
     if not feature_columns:
         raise SchemaValidationError(
             "A matriz não contém nenhuma coluna de atributos. "
             f"Prefixos esperados: {sorted(set(FEATURE_GROUP_PREFIXES.values()))}"
         )
 
-    if not allow_nan:
-        offenders = [
-            column
-            for column in feature_columns
-            if frame[column].null_count() > 0
-            or (
-                frame[column].dtype.is_numeric()
-                and not bool(np.all(np.isfinite(frame[column].fill_null(0.0).to_numpy())))
-            )
-        ]
-        if offenders:
-            raise SchemaValidationError(
-                f"{len(offenders)} coluna(s) com valores ausentes ou não finitos: "
-                f"{offenders[:10]}{'...' if len(offenders) > 10 else ''}. "
-                "Ajuste features.aggregation.missing_strategy em configs/features.yaml."
-            )
 
-    return frame
+def _find_non_finite_columns(frame: pl.DataFrame, feature_columns: list[str]) -> list[str]:
+    """Lista as colunas de atributos com valores ausentes ou não finitos."""
+    return [
+        column
+        for column in feature_columns
+        if frame[column].null_count() > 0
+        or (
+            frame[column].dtype.is_numeric()
+            and not bool(np.all(np.isfinite(frame[column].fill_null(0.0).to_numpy())))
+        )
+    ]
+
+
+def _validate_finite_feature_values(frame: pl.DataFrame, feature_columns: list[str]) -> None:
+    """Garante que não há valores ausentes ou não finitos nas colunas de atributos."""
+    offenders = _find_non_finite_columns(frame, feature_columns)
+    if offenders:
+        raise SchemaValidationError(
+            f"{len(offenders)} coluna(s) com valores ausentes ou não finitos: "
+            f"{offenders[:10]}{'...' if len(offenders) > 10 else ''}. "
+            "Ajuste features.aggregation.missing_strategy em configs/features.yaml."
+        )

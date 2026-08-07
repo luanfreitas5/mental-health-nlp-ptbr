@@ -157,6 +157,76 @@ def _build_console_handler(settings: dict[str, Any]) -> RichHandler:
     return handler
 
 
+def _configure_pii_filter(redaction: dict[str, Any]) -> PIIRedactionFilter | None:
+    """Cria o filtro de redação de PII a partir da seção ``redaction`` do YAML."""
+    if not redaction.get("enabled", True):
+        return None
+    return PIIRedactionFilter(
+        patterns=list(redaction.get("patterns", [])),
+        replacement=str(redaction.get("replacement", "[REDIGIDO]")),
+    )
+
+
+def _attach_console_handler(
+    root: logging.Logger,
+    console_settings: dict[str, Any],
+    pii_filter: PIIRedactionFilter | None,
+    level: str | None,
+    root_level: str,
+) -> None:
+    """Constrói e anexa o handler de console ao logger raiz, se habilitado."""
+    if not console_settings.get("enabled", True):
+        return
+    console_handler = _build_console_handler(console_settings)
+    if level:
+        console_handler.setLevel(root_level)
+    if pii_filter:
+        console_handler.addFilter(pii_filter)
+    root.addHandler(console_handler)
+
+
+def _attach_file_handler(
+    root: logging.Logger,
+    file_settings: dict[str, Any],
+    pii_filter: PIIRedactionFilter | None,
+) -> None:
+    """Constrói e anexa o handler de arquivo ao logger raiz, se habilitado."""
+    if not file_settings.get("enabled", True):
+        return
+
+    # Import tardio: evita ciclo (config.paths não depende de logging).
+    from config.paths import get_paths
+
+    logs_dir = Path(file_settings.get("directory", "logs"))
+    if not logs_dir.is_absolute():
+        logs_dir = get_paths().root / logs_dir
+    file_handler = _build_file_handler(file_settings, logs_dir)
+    if pii_filter:
+        file_handler.addFilter(pii_filter)
+    root.addHandler(file_handler)
+
+
+def _quiet_third_party_loggers(console_settings: dict[str, Any]) -> None:
+    """Reduz a verbosidade de bibliotecas de terceiros conforme configurado."""
+    for name, quiet_level in console_settings.get("quiet_loggers", {}).items():
+        logging.getLogger(name).setLevel(str(quiet_level).upper())
+
+
+def _reset_root_handlers(root: logging.Logger) -> None:
+    """Remove todos os handlers atualmente registrados no logger raiz."""
+    for handler in root.handlers.copy():
+        root.removeHandler(handler)
+
+
+def _resolve_logging_settings(config_file: Path | None) -> dict[str, Any]:
+    """Resolve o caminho do YAML de logging (padrão ou informado) e o carrega."""
+    # Import tardio: evita ciclo (config.paths não depende de logging).
+    from config.paths import get_paths
+
+    target = config_file or (get_paths().configs.root / "logging.yaml")
+    return read_logging_config(Path(target))
+
+
 def configure_logging(
     config_file: Path | None = None,
     level: str | None = None,
@@ -193,47 +263,17 @@ def configure_logging(
     if _CONFIGURED and not force:
         return root
 
-    # Import tardio: evita ciclo (config.paths não depende de logging).
-    from config.paths import get_paths
-
-    target = config_file or (get_paths().configs.root / "logging.yaml")
-    settings = read_logging_config(Path(target))
+    settings = _resolve_logging_settings(config_file)
 
     root_level = (level or settings.get("level", "INFO")).upper()
     root.setLevel(root_level)
-    for handler in root.handlers.copy():
-        root.removeHandler(handler)
+    _reset_root_handlers(root)
 
-    redaction = settings.get("redaction", {})
-    pii_filter: PIIRedactionFilter | None = None
-    if redaction.get("enabled", True):
-        pii_filter = PIIRedactionFilter(
-            patterns=list(redaction.get("patterns", [])),
-            replacement=str(redaction.get("replacement", "[REDIGIDO]")),
-        )
-
+    pii_filter = _configure_pii_filter(settings.get("redaction", {}))
     console_settings = settings.get("console", {})
-    if console_settings.get("enabled", True):
-        console_handler = _build_console_handler(console_settings)
-        if level:
-            console_handler.setLevel(root_level)
-        if pii_filter:
-            console_handler.addFilter(pii_filter)
-        root.addHandler(console_handler)
-
-    file_settings = settings.get("file", {})
-    if file_settings.get("enabled", True):
-        logs_dir = Path(file_settings.get("directory", "logs"))
-        if not logs_dir.is_absolute():
-            logs_dir = get_paths().root / logs_dir
-        file_handler = _build_file_handler(file_settings, logs_dir)
-        if pii_filter:
-            file_handler.addFilter(pii_filter)
-        root.addHandler(file_handler)
-
-    # Silencia bibliotecas de terceiros barulhentas.
-    for name, quiet_level in console_settings.get("quiet_loggers", {}).items():
-        logging.getLogger(name).setLevel(str(quiet_level).upper())
+    _attach_console_handler(root, console_settings, pii_filter, level, root_level)
+    _attach_file_handler(root, settings.get("file", {}), pii_filter)
+    _quiet_third_party_loggers(console_settings)
 
     _CONFIGURED = True
     return root

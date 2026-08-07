@@ -23,6 +23,37 @@ from utils.files import read_json
 logger = get_logger(__name__)
 
 
+def _load_features_summary(paths: ProjectPaths) -> dict[str, Any]:
+    """Carrega o resumo de atributos do dataset, se existir."""
+    features_path = paths.reports.metrics / "features_summary.json"
+    if features_path.is_file():
+        return read_json(features_path)
+    return {}
+
+
+def _load_labeling_quality(paths: ProjectPaths) -> dict[str, Any]:
+    """Carrega o relatório de qualidade dos rótulos, se existir."""
+    labeling_path = paths.reports.metrics / "labeling_quality.json"
+    if labeling_path.is_file():
+        return read_json(labeling_path)
+    return {}
+
+
+def _resolve_total_users(summary: dict[str, Any], distribution: dict[str, Any]) -> Any:
+    """Resolve o total de usuários a partir do resumo ou, na ausência, da distribuição."""
+    return summary.get("n_usuarios", sum(distribution.values()) if distribution else "—")
+
+
+def _describe_pseudonymization_status(privacy: Any) -> str:
+    """Descreve se a pseudonimização de identificadores diretos está ativa."""
+    return "ativa" if privacy.pseudonymize_user_ids else "inativa"
+
+
+def _describe_distribution(distribution: dict[str, Any]) -> Any:
+    """Retorna a distribuição de classes para exibição, ou um marcador de ausência."""
+    return distribution or "—"
+
+
 def build_datasheet(config: Config, paths: ProjectPaths) -> str:
     """Monta o Datasheet do dataset em Markdown.
 
@@ -47,18 +78,11 @@ def build_datasheet(config: Config, paths: ProjectPaths) -> str:
     collection = config.collection
     privacy = config.general.privacy
 
-    summary: dict[str, Any] = {}
-    features_path = paths.reports.metrics / "features_summary.json"
-    if features_path.is_file():
-        summary = read_json(features_path)
-
-    labeling: dict[str, Any] = {}
-    labeling_path = paths.reports.metrics / "labeling_quality.json"
-    if labeling_path.is_file():
-        labeling = read_json(labeling_path)
+    summary = _load_features_summary(paths)
+    labeling = _load_labeling_quality(paths)
 
     distribution = labeling.get("distribuicao_classes", {})
-    total_users = summary.get("n_usuarios", sum(distribution.values()) if distribution else "—")
+    total_users = _resolve_total_users(summary, distribution)
 
     lines: list[str] = [
         f"# Datasheet — Base Longitudinal de {config.general.project.name}",
@@ -90,7 +114,7 @@ def build_datasheet(config: Config, paths: ProjectPaths) -> str:
         "",
         f"- **Número de usuários:** {total_users}",
         f"- **Número de atributos:** {summary.get('n_atributos', '—')}",
-        f"- **Distribuição das classes:** {distribution or '—'}",
+        f"- **Distribuição das classes:** {_describe_distribution(distribution)}",
         "",
         "**Há informação faltante?**  ",
         "Sim, por construção: features de tendência temporal exigem histórico mínimo e ficam "
@@ -157,7 +181,7 @@ def build_datasheet(config: Config, paths: ProjectPaths) -> str:
         "",
         "## 5. Privacidade e base legal (LGPD)",
         "",
-        f"- **Pseudonimização:** {'ativa' if privacy.pseudonymize_user_ids else 'inativa'} — "
+        f"- **Pseudonimização:** {_describe_pseudonymization_status(privacy)} — "
         "identificadores diretos são convertidos em SHA-256 com salt secreto **antes** de "
         "qualquer gravação em disco. Sem o salt, o hash não é reversível por força bruta "
         "sobre handles públicos.",

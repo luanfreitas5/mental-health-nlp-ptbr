@@ -77,11 +77,7 @@ class EvaluationStage(PipelineStage):
             logger.error("Conjunto de teste vazio: nada a avaliar.")
             return {"skipped": True, "reason": "conjunto de teste vazio"}
 
-        texts = (
-            load_user_texts(read_partitioned(paths.data.tweets_labeled, stage="label"))
-            if list_files(paths.data.tweets_labeled, "*.parquet")
-            else None
-        )
+        texts = self._load_texts(paths)
         sequences = load_user_sequences(
             paths.data.embeddings, config.features.semantic.primary_model.split("/")[-1]
         )
@@ -105,15 +101,23 @@ class EvaluationStage(PipelineStage):
         interpretability = self._run_interpretability(results, test, texts, sequences, context)
 
         written = save_reports(results, comparison, config, paths, statistics, ablation_summary)
-
-        if context.tracker is not None:
-            for path in written.values():
-                context.tracker.log_artifact(Path(path))
+        self._log_report_artifacts(context, written)
 
         primary = config.evaluation.metrics.primary
         best = max(results, key=lambda name: results[name].metrics.get(primary, float("-inf")))
         logger.info("Melhor modelo: %s | %s", best, results[best].headline(primary))
 
+        return self._build_result_summary(results, best, primary, interpretability, written)
+
+    def _build_result_summary(
+        self,
+        results: dict[str, Any],
+        best: str,
+        primary: str,
+        interpretability: dict[str, Any],
+        written: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Monta o dicionário de retorno consolidado da etapa de avaliação."""
         return {
             "modelos_avaliados": sorted(results),
             "melhor_modelo": best,
@@ -122,6 +126,19 @@ class EvaluationStage(PipelineStage):
             "interpretabilidade": interpretability,
             "written": {key: str(value) for key, value in written.items()},
         }
+
+    def _load_texts(self, paths: Any) -> dict[str, list[str]] | None:
+        """Carrega os textos rotulados por usuário, se houver tweets rotulados persistidos."""
+        if not list_files(paths.data.tweets_labeled, "*.parquet"):
+            return None
+        return load_user_texts(read_partitioned(paths.data.tweets_labeled, stage="label"))
+
+    def _log_report_artifacts(self, context: StageContext, written: dict[str, Any]) -> None:
+        """Registra os relatórios gravados como artefatos do experimento, se houver tracker."""
+        if context.tracker is None:
+            return
+        for path in written.values():
+            context.tracker.log_artifact(Path(path))
 
     def _evaluate_models(
         self,
@@ -152,23 +169,31 @@ class EvaluationStage(PipelineStage):
 
     def _run_statistics(self, results: dict[str, Any], config: Any, paths: Any) -> dict[str, Any]:
         """Roda Wilcoxon/Friedman (se houver scores por fold) e o McNemar par a par."""
-        statistics: dict[str, Any] = {}
-        fold_scores_path = paths.reports.metrics / "cv_fold_scores.json"
-        if fold_scores_path.is_file():
-            fold_scores = {
-                name: np.array(scores)
-                for name, scores in read_json(fold_scores_path).items()
-                if name in results
-            }
-            if len(fold_scores) >= 2:
-                statistics = compare_all_models(fold_scores, config.evaluation.statistics)
-        else:
-            logger.info("Scores por fold ausentes: Wilcoxon e Friedman não executados.")
+        statistics = self._compare_fold_scores(results, config, paths)
 
         if config.evaluation.statistics.mcnemar.enabled and len(results) >= 2:
             statistics["mcnemar"] = self._run_mcnemar(results, config)
 
         return statistics
+
+    def _compare_fold_scores(
+        self, results: dict[str, Any], config: Any, paths: Any
+    ) -> dict[str, Any]:
+        """Roda Wilcoxon/Friedman a partir dos scores por fold persistidos, se existirem."""
+        fold_scores_path = paths.reports.metrics / "cv_fold_scores.json"
+        if not fold_scores_path.is_file():
+            logger.info("Scores por fold ausentes: Wilcoxon e Friedman não executados.")
+            return {}
+
+        fold_scores = {
+            name: np.array(scores)
+            for name, scores in read_json(fold_scores_path).items()
+            if name in results
+        }
+        if len(fold_scores) < 2:
+            return {}
+
+        return compare_all_models(fold_scores, config.evaluation.statistics)
 
     def _run_ablation_study(
         self,
@@ -227,20 +252,58 @@ class EvaluationStage(PipelineStage):
         paths = context.paths
         primary = config.evaluation.metrics.primary
 
-        # A interpretabilidade roda sobre o melhor modelo que expõe um
-        # pipeline scikit-learn: SHAP e permutação não se aplicam ao LLM nem
-        # às redes recorrentes com a mesma semântica.
+        best = self._select_best_interpretable_model(results, paths, primary)
+        if best is None:
+            return {}
+
+        loaded = self._load_interpretability_dataset(best, test, texts, sequences, config, paths)
+        if loaded is None:
+            return {}
+        model, dataset = loaded
+
+        summary: dict[str, Any] = {"modelo": best}
+        settings = config.evaluation.interpretability
+        if settings.permutation_importance.enabled:
+            summary.update(
+                self._run_permutation_importance(
+                    model, dataset, settings.permutation_importance, paths, best
+                )
+            )
+        if settings.shap.enabled:
+            summary.update(self._run_shap(model, dataset, settings.shap, paths, best))
+
+        return summary
+
+    def _select_best_interpretable_model(
+        self, results: dict[str, Any], paths: Any, primary: str
+    ) -> str | None:
+        """Escolhe, entre os modelos que expõem um pipeline scikit-learn, o de melhor métrica.
+
+        SHAP e permutação não se aplicam ao LLM nem às redes recorrentes com a
+        mesma semântica, por isso só os modelos persistidos em ``.joblib``
+        entram como candidatos.
+        """
         candidates = {
             name: result
             for name, result in results.items()
             if (paths.models.artifacts / f"{name}.joblib").is_file()
         }
         if not candidates:
-            return {}
-
-        best = max(
+            return None
+        return max(
             candidates, key=lambda name: candidates[name].metrics.get(primary, float("-inf"))
         )
+
+    def _load_interpretability_dataset(
+        self,
+        best: str,
+        test: pl.DataFrame,
+        texts: dict[str, list[str]] | None,
+        sequences: dict[str, Any] | None,
+        config: Any,
+        paths: Any,
+    ) -> tuple[Any, Any] | None:
+        """Carrega o modelo salvo e monta o dataset de teste; ``None`` se algo falhar."""
         try:
             model = load_model(paths.models.artifacts / f"{best}.joblib")
             spec = config.models.all_models().get(best)
@@ -252,32 +315,37 @@ class EvaluationStage(PipelineStage):
             )
         except (OSError, ValueError, KeyError) as error:
             logger.warning("Interpretabilidade pulada: %s", error)
-            return {}
+            return None
+        return model, dataset
 
-        summary: dict[str, Any] = {"modelo": best}
+    def _run_permutation_importance(
+        self, model: Any, dataset: Any, settings: Any, paths: Any, best: str
+    ) -> dict[str, Any]:
+        """Calcula e grava a importância por permutação (e agregada por grupo) do melhor modelo."""
+        result: dict[str, Any] = {}
+        importance = compute_permutation_importance(model, dataset, settings)
+        if importance.is_empty():
+            return result
 
-        settings = config.evaluation.interpretability
-        if settings.permutation_importance.enabled:
-            importance = compute_permutation_importance(
-                model, dataset, settings.permutation_importance
-            )
-            if not importance.is_empty():
-                path = paths.reports.interpretability / f"permutation_importance_{best}.csv"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                importance.write_csv(path)
+        path = paths.reports.interpretability / f"permutation_importance_{best}.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        importance.write_csv(path)
 
-                grouped = aggregate_importance_by_group(importance)
-                if not grouped.is_empty():
-                    grouped.write_csv(
-                        paths.reports.interpretability / f"group_importance_{best}.csv"
-                    )
-                    summary["importancia_por_grupo"] = grouped.to_dicts()
+        grouped = aggregate_importance_by_group(importance)
+        if not grouped.is_empty():
+            grouped.write_csv(paths.reports.interpretability / f"group_importance_{best}.csv")
+            result["importancia_por_grupo"] = grouped.to_dicts()
 
-        if settings.shap.enabled:
-            shap_result = compute_shap_values(model, dataset, settings.shap)
-            shap_summary = summarize_shap(shap_result, settings.shap.max_display)
-            saved = save_shap_summary(shap_summary, paths.reports.interpretability, best)
-            if saved is not None:
-                summary["shap"] = str(saved)
+        return result
 
-        return summary
+    def _run_shap(
+        self, model: Any, dataset: Any, settings: Any, paths: Any, best: str
+    ) -> dict[str, Any]:
+        """Calcula e grava o resumo SHAP do melhor modelo."""
+        result: dict[str, Any] = {}
+        shap_result = compute_shap_values(model, dataset, settings)
+        shap_summary = summarize_shap(shap_result, settings.max_display)
+        saved = save_shap_summary(shap_summary, paths.reports.interpretability, best)
+        if saved is not None:
+            result["shap"] = str(saved)
+        return result

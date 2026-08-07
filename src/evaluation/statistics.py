@@ -440,6 +440,103 @@ def nemenyi_critical_difference(n_models: int, n_folds: int, alpha: float = 0.05
     return float(q_alpha * np.sqrt(n_models * (n_models + 1) / (6.0 * n_folds)))
 
 
+def _run_friedman_comparison(
+    scores_by_model: dict[str, np.ndarray],
+    config: StatisticsSection,
+    names: list[str],
+) -> dict[str, Any]:
+    """Executa o teste de Friedman e a diferença crítica de Nemenyi, se aplicável."""
+    if not config.friedman.enabled or len(names) < 3:
+        return {}
+
+    friedman = friedman_test(scores_by_model, alpha=config.alpha)
+    n_folds = len(next(iter(scores_by_model.values())))
+    return {
+        "friedman": friedman.__dict__,
+        "nemenyi_critical_difference": nemenyi_critical_difference(
+            len(names), n_folds, config.alpha
+        ),
+    }
+
+
+def _apply_bonferroni_correction(p_values: list[float]) -> list[float]:
+    """Aplica a correção de Bonferroni simples a uma lista de p-valores brutos."""
+    return [min(1.0, p_value * len(p_values)) for p_value in p_values]
+
+
+def _correct_pairwise_p_values(tests: list[TestResult], method: str) -> list[float]:
+    """Aplica a correção para múltiplas comparações configurada aos p-valores brutos."""
+    p_values = [test.p_value for test in tests]
+    if method == "holm":
+        return holm_correction(p_values)
+    if method == "bonferroni":
+        return _apply_bonferroni_correction(p_values)
+    return p_values
+
+
+def _compute_pairwise_tests(
+    scores_by_model: dict[str, np.ndarray],
+    pairs: list[tuple[str, str]],
+    config: StatisticsSection,
+) -> list[TestResult]:
+    """Executa o teste de Wilcoxon para cada par de modelos."""
+    return [
+        wilcoxon_test(
+            scores_by_model[first],
+            scores_by_model[second],
+            alternative=config.wilcoxon.alternative or "two-sided",
+            alpha=config.alpha,
+        )
+        for first, second in pairs
+    ]
+
+
+def _build_pairwise_results(
+    pairs: list[tuple[str, str]],
+    tests: list[TestResult],
+    corrected: list[float],
+    alpha: float,
+) -> dict[str, Any]:
+    """Monta o dicionário de resultados pareados, com o p-valor corrigido."""
+    return {
+        f"{first}_vs_{second}": test.__dict__
+        | {
+            "p_value_corrected": adjusted,
+            "significant": adjusted < alpha,
+        }
+        for (first, second), test, adjusted in zip(pairs, tests, corrected, strict=True)
+    }
+
+
+def _log_pairwise_summary(pairwise: dict[str, Any], n_pairs: int, correction_method: str) -> None:
+    """Registra quantas comparações par a par foram significativas após a correção."""
+    n_significant = sum(1 for entry in pairwise.values() if entry["significant"])
+    logger.info(
+        "Comparações par a par: %d de %d significativas após correção %s.",
+        n_significant,
+        n_pairs,
+        correction_method,
+    )
+
+
+def _run_pairwise_comparison(
+    scores_by_model: dict[str, np.ndarray],
+    config: StatisticsSection,
+    names: list[str],
+) -> dict[str, Any]:
+    """Compara todos os pares de modelos via Wilcoxon, com correção e log do resumo."""
+    if not config.wilcoxon.enabled or len(names) < 2:
+        return {}
+
+    pairs = list(combinations(names, 2))
+    tests = _compute_pairwise_tests(scores_by_model, pairs, config)
+    corrected = _correct_pairwise_p_values(tests, config.multiple_comparison_correction)
+    pairwise = _build_pairwise_results(pairs, tests, corrected, config.alpha)
+
+    _log_pairwise_summary(pairwise, len(pairs), config.multiple_comparison_correction)
+    return {"pairwise": pairwise}
+
+
 def compare_all_models(
     scores_by_model: dict[str, np.ndarray],
     config: StatisticsSection,
@@ -463,53 +560,9 @@ def compare_all_models(
     --------
     >>> compare_all_models(scores, config.evaluation.statistics)  # doctest: +SKIP
     """
-    results: dict[str, Any] = {}
     names = sorted(scores_by_model)
 
-    if config.friedman.enabled and len(names) >= 3:
-        friedman = friedman_test(scores_by_model, alpha=config.alpha)
-        results["friedman"] = friedman.__dict__
-        n_folds = len(next(iter(scores_by_model.values())))
-        results["nemenyi_critical_difference"] = nemenyi_critical_difference(
-            len(names), n_folds, config.alpha
-        )
-
-    if not config.wilcoxon.enabled or len(names) < 2:
-        return results
-
-    pairs = list(combinations(names, 2))
-    tests = [
-        wilcoxon_test(
-            scores_by_model[first],
-            scores_by_model[second],
-            alternative=config.wilcoxon.alternative or "two-sided",
-            alpha=config.alpha,
-        )
-        for first, second in pairs
-    ]
-
-    corrected = (
-        holm_correction([test.p_value for test in tests])
-        if config.multiple_comparison_correction == "holm"
-        else [min(1.0, test.p_value * len(tests)) for test in tests]
-        if config.multiple_comparison_correction == "bonferroni"
-        else [test.p_value for test in tests]
-    )
-
-    results["pairwise"] = {
-        f"{first}_vs_{second}": test.__dict__
-        | {
-            "p_value_corrected": adjusted,
-            "significant": adjusted < config.alpha,
-        }
-        for (first, second), test, adjusted in zip(pairs, tests, corrected, strict=True)
-    }
-
-    n_significant = sum(1 for entry in results["pairwise"].values() if entry["significant"])
-    logger.info(
-        "Comparações par a par: %d de %d significativas após correção %s.",
-        n_significant,
-        len(pairs),
-        config.multiple_comparison_correction,
-    )
+    results: dict[str, Any] = {}
+    results.update(_run_friedman_comparison(scores_by_model, config, names))
+    results.update(_run_pairwise_comparison(scores_by_model, config, names))
     return results

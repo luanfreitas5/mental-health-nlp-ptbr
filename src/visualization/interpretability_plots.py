@@ -27,6 +27,40 @@ GROUP_COLORS: dict[str, str] = {
 }
 
 
+def _group_bar_colors(data: Any) -> list[str]:
+    """Retorna a cor de cada barra a partir do grupo do atributo."""
+    groups = data["grupo"] if "grupo" in data.columns else []
+    return [GROUP_COLORS.get(group, "#8C8C8C") for group in groups]
+
+
+def _add_importance_error_bars(axis: Any, data: Any) -> None:
+    """Adiciona barras de erro de desvio-padrão à importância, se disponível."""
+    if "desvio" not in data.columns:
+        return
+
+    axis.errorbar(
+        data["importancia"],
+        range(len(data)),
+        xerr=data["desvio"],
+        fmt="none",
+        ecolor="#333333",
+        capsize=3,
+        linewidth=1,
+    )
+
+
+def _add_group_legend(axis: Any, data: Any) -> None:
+    """Adiciona a legenda de grupos de atributos, se a coluna existir."""
+    if "grupo" not in data.columns:
+        return
+
+    present = sorted(set(data["grupo"]))
+    handles = [
+        Rectangle((0, 0), 1, 1, color=GROUP_COLORS.get(group, "#8C8C8C")) for group in present
+    ]
+    axis.legend(handles, present, title="Grupo de atributos", loc="lower right")
+
+
 def plot_feature_importance(importance: pl.DataFrame, top_n: int = 25) -> Any | None:
     """Plota os atributos mais importantes, coloridos por grupo.
 
@@ -51,29 +85,13 @@ def plot_feature_importance(importance: pl.DataFrame, top_n: int = 25) -> Any | 
         return None
 
     data = importance.head(top_n).reverse().to_pandas()
-    groups = data["grupo"] if "grupo" in data.columns else []
-    colors = [GROUP_COLORS.get(group, "#8C8C8C") for group in groups]
+    colors = _group_bar_colors(data)
 
     figure, axis = plt.subplots(figsize=(10, max(5, 0.32 * len(data))))
     axis.barh(data["atributo"], data["importancia"], color=colors or "#4C72B0", alpha=0.9)
 
-    if "desvio" in data.columns:
-        axis.errorbar(
-            data["importancia"],
-            range(len(data)),
-            xerr=data["desvio"],
-            fmt="none",
-            ecolor="#333333",
-            capsize=3,
-            linewidth=1,
-        )
-
-    if "grupo" in data.columns:
-        present = sorted(set(data["grupo"]))
-        handles = [
-            Rectangle((0, 0), 1, 1, color=GROUP_COLORS.get(group, "#8C8C8C")) for group in present
-        ]
-        axis.legend(handles, present, title="Grupo de atributos", loc="lower right")
+    _add_importance_error_bars(axis, data)
+    _add_group_legend(axis, data)
 
     axis.set_title(f"Importância por Permutação — {top_n} Atributos Mais Relevantes")
     axis.set_xlabel("Queda na métrica ao permutar o atributo")

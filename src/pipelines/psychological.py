@@ -15,6 +15,7 @@ from typing import Any
 import polars as pl
 
 from config.logging import get_logger
+from config.settings import Config
 from constants.columns import USER_ID
 from data.reader import list_collected_users, read_partitioned, select_pending_users
 from data.writer import write_user_partition
@@ -45,6 +46,46 @@ class PsychologicalStage(PipelineStage):
         """Exige os tweets limpos da etapa de pré-processamento."""
         return [context.paths.data.tweets_clean]
 
+    def _load_source_tweets(self, context: StageContext) -> pl.DataFrame:
+        """Carrega os tweets rotulados, se existirem, ou os tweets limpos."""
+        paths = context.paths
+        labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
+        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
+        return read_partitioned(source, stage="label" if labeled_available else "preprocess")
+
+    def _create_extractor(self, config: Config) -> PsychologicalExtractor:
+        """Instancia o extrator e garante que o modelo Ollama está disponível."""
+        extractor = PsychologicalExtractor(config.llm)
+        extractor.client.ensure_model(config.llm.psychological_features.model)
+        return extractor
+
+    def _extract_pending_users(
+        self,
+        context: StageContext,
+        extractor: PsychologicalExtractor,
+        tweets: pl.DataFrame,
+        pending: list[str],
+    ) -> None:
+        """Extrai e grava o vetor psicológico de cada usuário pendente."""
+        paths = context.paths
+        groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
+            USER_ID, as_dict=True, maintain_order=True
+        )
+        for user_id in track(pending, "Extraindo vetor psicológico"):
+            user_frame = groups.get((user_id,))
+            if user_frame is None or user_frame.is_empty():
+                continue
+
+            scores = extractor.extract_frame(user_frame)
+            if scores.is_empty():
+                logger.warning("Nenhum vetor psicológico válido para o usuário.")
+                continue
+
+            validate_frame(
+                scores, PsychologicalScoreSchema, context="saída da extração psicológica"
+            )
+            write_user_partition(scores, paths.data.psychological_scores, user_id)
+
     def run(self, context: StageContext) -> dict[str, Any]:
         """Executa a extração psicológica.
 
@@ -71,9 +112,7 @@ class PsychologicalStage(PipelineStage):
             return {"skipped": True, "reason": "desativada na configuração"}
 
         # Prefere os tweets já rotulados (têm sentimento), mas funciona sem eles.
-        labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
-        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
-        tweets = read_partitioned(source, stage="label" if labeled_available else "preprocess")
+        tweets = self._load_source_tweets(context)
 
         already_processed = list_collected_users(paths.data.psychological_scores)
         pending = select_pending_users(
@@ -89,8 +128,7 @@ class PsychologicalStage(PipelineStage):
 
         if pending:
             try:
-                extractor = PsychologicalExtractor(config.llm)
-                extractor.client.ensure_model(config.llm.psychological_features.model)
+                extractor = self._create_extractor(config)
             except (LLMUnavailableError, MissingDependencyError) as error:
                 logger.warning(
                     "Extração psicológica pulada: %s. O grupo 'psychological' ficará ausente "
@@ -99,23 +137,7 @@ class PsychologicalStage(PipelineStage):
                 )
                 return {"skipped": True, "reason": str(error)}
 
-            groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-                USER_ID, as_dict=True, maintain_order=True
-            )
-            for user_id in track(pending, "Extraindo vetor psicológico"):
-                user_frame = groups.get((user_id,))
-                if user_frame is None or user_frame.is_empty():
-                    continue
-
-                scores = extractor.extract_frame(user_frame)
-                if scores.is_empty():
-                    logger.warning("Nenhum vetor psicológico válido para o usuário.")
-                    continue
-
-                validate_frame(
-                    scores, PsychologicalScoreSchema, context="saída da extração psicológica"
-                )
-                write_user_partition(scores, paths.data.psychological_scores, user_id)
+            self._extract_pending_users(context, extractor, tweets, pending)
 
         processed_users = list_collected_users(paths.data.psychological_scores)
         if not processed_users:

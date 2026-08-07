@@ -88,20 +88,7 @@ class FeaturesStage(PipelineStage):
 
         tweets = read_partitioned(paths.data.tweets_labeled, stage="label")
         labels = read_parquet(paths.data.user_labels)
-
-        metadata = (
-            read_parquet(paths.data.user_metadata) if paths.data.user_metadata.is_file() else None
-        )
-        scores = (
-            read_partitioned(paths.data.psychological_scores)
-            if list_files(paths.data.psychological_scores, "*.parquet")
-            else None
-        )
-        if scores is None:
-            logger.warning(
-                "Vetores psicológicos ausentes: o grupo 'psychological' será omitido. "
-                "Execute a etapa 'psych' para incluí-lo."
-            )
+        metadata, scores = self._load_optional_inputs(paths)
 
         already_processed = list_collected_users(paths.data.user_features_raw)
         pending = select_pending_users(
@@ -116,32 +103,7 @@ class FeaturesStage(PipelineStage):
         )
 
         if pending:
-            tweet_groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-                USER_ID, as_dict=True, maintain_order=True
-            )
-            metadata_groups = (
-                metadata.partition_by(USER_ID, as_dict=True, maintain_order=True)
-                if metadata is not None
-                else {}
-            )
-            scores_groups = (
-                scores.partition_by(USER_ID, as_dict=True, maintain_order=True)
-                if scores is not None
-                else {}
-            )
-
-            for user_id in track(pending, "Construindo atributos por usuário"):
-                user_tweets = tweet_groups.get((user_id,))
-                if user_tweets is None or user_tweets.is_empty():
-                    continue
-
-                raw_row = build_user_features_raw(
-                    user_tweets,
-                    config.features,
-                    metadata=metadata_groups.get((user_id,)),
-                    psychological_scores=scores_groups.get((user_id,)),
-                )
-                write_user_partition(raw_row, paths.data.user_features_raw, user_id)
+            self._build_pending_user_features(tweets, metadata, scores, pending, config, paths)
 
         processed_users = list_collected_users(paths.data.user_features_raw)
         if not processed_users:
@@ -152,17 +114,106 @@ class FeaturesStage(PipelineStage):
             )
 
         raw = read_partitioned(paths.data.user_features_raw)
-        features = finalize_user_features(raw, config.features, labels=labels)
-
-        # Os embeddings são unidos aqui (e não dentro do builder) porque vêm de
-        # um artefato separado, produzido pela etapa `embed`.
-        semantic = self._load_semantic(context)
-        if semantic is not None:
-            features = features.join(semantic, on="user_id", how="left").fill_null(0.0)
+        features = self._finalize_features(raw, config, labels, context)
 
         validate_feature_matrix(features, allow_nan=False)
         target = write_parquet(features, paths.data.user_features)
 
+        by_group = self._write_feature_reports(features, config, paths)
+
+        return {
+            "n_usuarios": features.height,
+            "n_atributos": len(list_feature_columns(features)),
+            "atributos_por_grupo": by_group,
+            "written": str(target),
+        }
+
+    def _load_optional_inputs(self, paths: Any) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
+        """Carrega metadata e vetores psicológicos opcionais, avisando se os scores faltarem."""
+        metadata = (
+            read_parquet(paths.data.user_metadata) if paths.data.user_metadata.is_file() else None
+        )
+        scores = (
+            read_partitioned(paths.data.psychological_scores)
+            if list_files(paths.data.psychological_scores, "*.parquet")
+            else None
+        )
+        if scores is None:
+            logger.warning(
+                "Vetores psicológicos ausentes: o grupo 'psychological' será omitido. "
+                "Execute a etapa 'psych' para incluí-lo."
+            )
+        return metadata, scores
+
+    def _build_pending_user_features(
+        self,
+        tweets: pl.DataFrame,
+        metadata: pl.DataFrame | None,
+        scores: pl.DataFrame | None,
+        pending: list[str],
+        config: Any,
+        paths: Any,
+    ) -> None:
+        """Constrói e grava, usuário a usuário, a linha de atributos brutos dos pendentes."""
+        tweet_groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
+            USER_ID, as_dict=True, maintain_order=True
+        )
+        metadata_groups = (
+            metadata.partition_by(USER_ID, as_dict=True, maintain_order=True)
+            if metadata is not None
+            else {}
+        )
+        scores_groups = (
+            scores.partition_by(USER_ID, as_dict=True, maintain_order=True)
+            if scores is not None
+            else {}
+        )
+
+        for user_id in track(pending, "Construindo atributos por usuário"):
+            self._build_and_write_user_row(
+                user_id, tweet_groups, metadata_groups, scores_groups, config, paths
+            )
+
+    def _build_and_write_user_row(
+        self,
+        user_id: str,
+        tweet_groups: dict[Any, pl.DataFrame],
+        metadata_groups: dict[Any, pl.DataFrame],
+        scores_groups: dict[Any, pl.DataFrame],
+        config: Any,
+        paths: Any,
+    ) -> None:
+        """Monta e grava a linha de atributos brutos de um único usuário, se houver tweets."""
+        user_tweets = tweet_groups.get((user_id,))
+        if user_tweets is None or user_tweets.is_empty():
+            return
+
+        raw_row = build_user_features_raw(
+            user_tweets,
+            config.features,
+            metadata=metadata_groups.get((user_id,)),
+            psychological_scores=scores_groups.get((user_id,)),
+        )
+        write_user_partition(raw_row, paths.data.user_features_raw, user_id)
+
+    def _finalize_features(
+        self, raw: pl.DataFrame, config: Any, labels: pl.DataFrame, context: StageContext
+    ) -> pl.DataFrame:
+        """Finaliza a matriz (imputação, rótulos) e junta os embeddings semânticos, se existirem.
+
+        Os embeddings são unidos aqui (e não dentro do builder) porque vêm de
+        um artefato separado, produzido pela etapa `embed`.
+        """
+        features = finalize_user_features(raw, config.features, labels=labels)
+        semantic = self._load_semantic(context)
+        if semantic is not None:
+            features = features.join(semantic, on="user_id", how="left").fill_null(0.0)
+        return features
+
+    def _write_feature_reports(
+        self, features: pl.DataFrame, config: Any, paths: Any
+    ) -> dict[str, int]:
+        """Grava o resumo de atributos e o manifesto do dataset; loga a contagem por grupo."""
         by_group = {
             group: len(list_feature_columns(features, [group])) for group in config.features.groups
         }
@@ -183,9 +234,4 @@ class FeaturesStage(PipelineStage):
         write_dataset_manifest(paths, {"n_usuarios": features.height})
 
         logger.info("Atributos por grupo: %s", by_group)
-        return {
-            "n_usuarios": features.height,
-            "n_atributos": len(list_feature_columns(features)),
-            "atributos_por_grupo": by_group,
-            "written": str(target),
-        }
+        return by_group

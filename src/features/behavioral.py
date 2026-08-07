@@ -42,6 +42,28 @@ logger = get_logger(__name__)
 ENGAGEMENT_COLUMNS: tuple[str, ...] = (LIKE_COUNT, REPLY_COUNT, RETWEET_COUNT, QUOTE_COUNT)
 
 
+def _apply_log_transform(frame: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+    """Aplica ``log1p`` às colunas de engajamento informadas."""
+    return frame.with_columns(
+        [pl.col(column).cast(pl.Float64).log1p().alias(column) for column in columns]
+    )
+
+
+def _build_engagement_expressions(available: list[str], aggregations: list[str]) -> list[pl.Expr]:
+    """Monta as expressões de agregação de engajamento, incluindo a taxa de zero curtidas."""
+    expressions: list[pl.Expr] = []
+    for column in available:
+        expressions.extend(build_aggregations(column, aggregations, BEHAVIORAL_PREFIX))
+
+    # Fração de tweets sem nenhuma interação: mede alcance social de forma
+    # complementar à média, que é puxada pelos poucos tweets muito populares.
+    if LIKE_COUNT in available:
+        expressions.append(
+            (pl.col(LIKE_COUNT) == 0).mean().alias(f"{BEHAVIORAL_PREFIX}zero_like_ratio")
+        )
+    return expressions
+
+
 def compute_engagement(
     tweets: pl.DataFrame,
     aggregations: list[str],
@@ -75,24 +97,32 @@ def compute_engagement(
         logger.warning("Nenhuma coluna de engajamento encontrada nos tweets.")
         return tweets.select(USER_ID).unique().sort(USER_ID)
 
-    frame = tweets
-    if log_transform:
-        frame = frame.with_columns(
-            [pl.col(column).cast(pl.Float64).log1p().alias(column) for column in available]
-        )
-
-    expressions: list[pl.Expr] = []
-    for column in available:
-        expressions.extend(build_aggregations(column, aggregations, BEHAVIORAL_PREFIX))
-
-    # Fração de tweets sem nenhuma interação: mede alcance social de forma
-    # complementar à média, que é puxada pelos poucos tweets muito populares.
-    if LIKE_COUNT in available:
-        expressions.append(
-            (pl.col(LIKE_COUNT) == 0).mean().alias(f"{BEHAVIORAL_PREFIX}zero_like_ratio")
-        )
+    frame = _apply_log_transform(tweets, available) if log_transform else tweets
+    expressions = _build_engagement_expressions(available, aggregations)
 
     return frame.group_by(USER_ID).agg(expressions).sort(USER_ID)
+
+
+def _build_interaction_expressions(tweets: pl.DataFrame) -> list[pl.Expr]:
+    """Monta as expressões de razão de resposta e repostagem disponíveis nos tweets."""
+    expressions: list[pl.Expr] = []
+    if IS_REPLY in tweets.columns:
+        expressions.append(pl.col(IS_REPLY).mean().alias(f"{BEHAVIORAL_PREFIX}reply_ratio"))
+    if IS_RETWEET in tweets.columns:
+        expressions.append(pl.col(IS_RETWEET).mean().alias(f"{BEHAVIORAL_PREFIX}retweet_ratio"))
+    return expressions
+
+
+def _add_original_content_ratio(result: pl.DataFrame) -> pl.DataFrame:
+    """Deriva a razão de conteúdo original a partir das razões de resposta e repostagem."""
+    if f"{BEHAVIORAL_PREFIX}reply_ratio" not in result.columns:
+        return result
+
+    original = 1.0 - pl.col(f"{BEHAVIORAL_PREFIX}reply_ratio")
+    if f"{BEHAVIORAL_PREFIX}retweet_ratio" in result.columns:
+        original = original - pl.col(f"{BEHAVIORAL_PREFIX}retweet_ratio")
+
+    return result.with_columns(original.clip(0.0, 1.0).alias(f"{BEHAVIORAL_PREFIX}original_ratio"))
 
 
 def compute_interaction_ratios(tweets: pl.DataFrame) -> pl.DataFrame:
@@ -118,26 +148,12 @@ def compute_interaction_ratios(tweets: pl.DataFrame) -> pl.DataFrame:
     """
     require_columns(tweets, [USER_ID], context="razões de interação")
 
-    expressions: list[pl.Expr] = []
-    if IS_REPLY in tweets.columns:
-        expressions.append(pl.col(IS_REPLY).mean().alias(f"{BEHAVIORAL_PREFIX}reply_ratio"))
-    if IS_RETWEET in tweets.columns:
-        expressions.append(pl.col(IS_RETWEET).mean().alias(f"{BEHAVIORAL_PREFIX}retweet_ratio"))
-
+    expressions = _build_interaction_expressions(tweets)
     if not expressions:
         return tweets.select(USER_ID).unique().sort(USER_ID)
 
     result = tweets.group_by(USER_ID).agg(expressions)
-
-    if f"{BEHAVIORAL_PREFIX}reply_ratio" in result.columns:
-        original = 1.0 - pl.col(f"{BEHAVIORAL_PREFIX}reply_ratio")
-        if f"{BEHAVIORAL_PREFIX}retweet_ratio" in result.columns:
-            original = original - pl.col(f"{BEHAVIORAL_PREFIX}retweet_ratio")
-        result = result.with_columns(
-            original.clip(0.0, 1.0).alias(f"{BEHAVIORAL_PREFIX}original_ratio")
-        )
-
-    return result.sort(USER_ID)
+    return _add_original_content_ratio(result).sort(USER_ID)
 
 
 def compute_audience(metadata: pl.DataFrame, *, log_transform: bool = True) -> pl.DataFrame:
@@ -171,22 +187,70 @@ def compute_audience(metadata: pl.DataFrame, *, log_transform: bool = True) -> p
         return metadata.select(USER_ID).unique().sort(USER_ID)
 
     result = metadata.select([USER_ID, *available])
+    result = _add_follower_following_ratio(result, available)
+    result = _rename_audience_columns(result, available, log_transform=log_transform)
 
-    if FOLLOWERS_COUNT in available and FOLLOWING_COUNT in available:
-        result = result.with_columns(
-            (
-                pl.col(FOLLOWERS_COUNT).cast(pl.Float64)
-                / (pl.col(FOLLOWING_COUNT).cast(pl.Float64) + 1.0)
-            ).alias(f"{BEHAVIORAL_PREFIX}follower_following_ratio")
-        )
+    return result.drop(available).sort(USER_ID)
 
+
+def _add_follower_following_ratio(result: pl.DataFrame, available: list[str]) -> pl.DataFrame:
+    """Adiciona a razão seguidores/seguindo, quando ambas as colunas estão disponíveis."""
+    if FOLLOWERS_COUNT not in available or FOLLOWING_COUNT not in available:
+        return result
+
+    return result.with_columns(
+        (
+            pl.col(FOLLOWERS_COUNT).cast(pl.Float64)
+            / (pl.col(FOLLOWING_COUNT).cast(pl.Float64) + 1.0)
+        ).alias(f"{BEHAVIORAL_PREFIX}follower_following_ratio")
+    )
+
+
+def _rename_audience_columns(
+    result: pl.DataFrame, available: list[str], *, log_transform: bool
+) -> pl.DataFrame:
+    """Renomeia as colunas de audiência com o prefixo do grupo, aplicando ``log1p`` se ativo."""
     for column in available:
         expression = pl.col(column).cast(pl.Float64)
         if log_transform:
             expression = expression.log1p()
         result = result.with_columns(expression.alias(f"{BEHAVIORAL_PREFIX}{column}"))
+    return result
 
-    return result.drop(available).sort(USER_ID)
+
+def _collect_audience_frame(
+    metadata: pl.DataFrame | None, config: BehavioralSection
+) -> list[pl.DataFrame]:
+    """Calcula o subgrupo de features de audiência, quando os metadados estão disponíveis."""
+    if not config.audience:
+        return []
+    if metadata is None or metadata.is_empty():
+        logger.warning("Metadados de usuário ausentes: as features de audiência serão omitidas.")
+        return []
+    return [compute_audience(metadata, log_transform=config.log_transform)]
+
+
+def _collect_behavioral_frames(
+    tweets: pl.DataFrame, metadata: pl.DataFrame | None, config: BehavioralSection
+) -> list[pl.DataFrame]:
+    """Calcula os subgrupos de features comportamentais habilitados na configuração."""
+    frames: list[pl.DataFrame] = []
+    if config.engagement:
+        frames.append(
+            compute_engagement(tweets, config.aggregations, log_transform=config.log_transform)
+        )
+    if config.reply_ratio:
+        frames.append(compute_interaction_ratios(tweets))
+    frames.extend(_collect_audience_frame(metadata, config))
+    return frames
+
+
+def _join_behavioral_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """Une os subgrupos de features comportamentais pelo identificador de usuário."""
+    result = frames[0]
+    for frame in frames[1:]:
+        result = result.join(frame, on=USER_ID, how="full", coalesce=True)
+    return result
 
 
 def build_behavioral_features(
@@ -214,25 +278,12 @@ def build_behavioral_features(
     --------
     >>> build_behavioral_features(tweets, metadados, config.features.behavioral)  # doctest: +SKIP
     """
-    frames: list[pl.DataFrame] = []
-
-    if config.engagement:
-        frames.append(
-            compute_engagement(tweets, config.aggregations, log_transform=config.log_transform)
-        )
-    if config.reply_ratio:
-        frames.append(compute_interaction_ratios(tweets))
-    if config.audience and metadata is not None and not metadata.is_empty():
-        frames.append(compute_audience(metadata, log_transform=config.log_transform))
-    elif config.audience:
-        logger.warning("Metadados de usuário ausentes: as features de audiência serão omitidas.")
+    frames = _collect_behavioral_frames(tweets, metadata, config)
 
     if not frames:
         return tweets.select(USER_ID).unique().sort(USER_ID)
 
-    result = frames[0]
-    for frame in frames[1:]:
-        result = result.join(frame, on=USER_ID, how="full", coalesce=True)
+    result = _join_behavioral_frames(frames)
 
     logger.info(
         "Features comportamentais: %d colunas para %d usuários.", result.width - 1, result.height

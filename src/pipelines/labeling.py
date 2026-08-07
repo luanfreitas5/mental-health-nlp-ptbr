@@ -71,6 +71,18 @@ class LabelingStage(PipelineStage):
         if not pending:
             return
 
+        sentiment_labeler, emotion_labeler = self._build_labelers(config)
+
+        groups = clean.filter(pl.col(USER_ID).is_in(pending)).partition_by(
+            USER_ID, as_dict=True, maintain_order=True
+        )
+        for user_id in track(pending, "Rotulando usuários (sentimento/emoção)"):
+            self._label_and_write_user(
+                user_id, groups, sentiment_labeler, emotion_labeler, paths.data.tweets_labeled
+            )
+
+    def _build_labelers(self, config: Any) -> tuple[SentimentLabeler | None, EmotionLabeler | None]:
+        """Instancia os rotuladores de sentimento e emoção conforme habilitados na configuração."""
         sentiment_config = config.labeling.sentiment
         sentiment_labeler = SentimentLabeler(sentiment_config) if sentiment_config.enabled else None
         if sentiment_labeler is None:
@@ -78,37 +90,51 @@ class LabelingStage(PipelineStage):
         emotion_labeler = (
             EmotionLabeler(config.labeling.emotion) if config.labeling.emotion.enabled else None
         )
+        return sentiment_labeler, emotion_labeler
 
-        groups = clean.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-            USER_ID, as_dict=True, maintain_order=True
-        )
-        for user_id in track(pending, "Rotulando usuários (sentimento/emoção)"):
-            user_frame = groups.get((user_id,))
-            if user_frame is None or user_frame.is_empty():
-                continue
+    def _label_and_write_user(
+        self,
+        user_id: str,
+        groups: dict[Any, pl.DataFrame],
+        sentiment_labeler: SentimentLabeler | None,
+        emotion_labeler: EmotionLabeler | None,
+        labeled_dir: Path,
+    ) -> None:
+        """Rotula e grava o particionamento de um único usuário, se houver tweets pendentes."""
+        user_frame = groups.get((user_id,))
+        if user_frame is None or user_frame.is_empty():
+            return
 
-            if sentiment_labeler is not None:
-                user_frame = sentiment_labeler.label_frame(user_frame)
-            else:
-                user_frame = user_frame.with_columns(
-                    pl.lit("neutro").alias("sentiment"),
-                    pl.lit(0.0).alias("sentiment_score"),
-                    pl.lit(0.0).alias("sentiment_polarity"),
-                )
+        user_frame = self._label_user_frame(user_frame, sentiment_labeler, emotion_labeler)
+        write_user_partition(user_frame, labeled_dir, user_id)
 
-            validate_frame(
-                user_frame, LabeledTweetSchema, context="saída da rotulação de sentimento"
+    def _label_user_frame(
+        self,
+        user_frame: pl.DataFrame,
+        sentiment_labeler: SentimentLabeler | None,
+        emotion_labeler: EmotionLabeler | None,
+    ) -> pl.DataFrame:
+        """Aplica sentimento (ou neutro padrão) e emoções a um usuário, validando o esquema."""
+        if sentiment_labeler is not None:
+            user_frame = sentiment_labeler.label_frame(user_frame)
+        else:
+            user_frame = user_frame.with_columns(
+                pl.lit("neutro").alias("sentiment"),
+                pl.lit(0.0).alias("sentiment_score"),
+                pl.lit(0.0).alias("sentiment_polarity"),
             )
 
-            if emotion_labeler is not None:
-                try:
-                    user_frame = emotion_labeler.label_frame(user_frame)
-                except (OSError, ValueError) as error:
-                    # As emoções finas são complementares: sua ausência degrada as
-                    # features emocionais, mas não invalida a etapa.
-                    logger.warning("Rotulação de emoções falhou e será omitida: %s", error)
+        validate_frame(user_frame, LabeledTweetSchema, context="saída da rotulação de sentimento")
 
-            write_user_partition(user_frame, paths.data.tweets_labeled, user_id)
+        if emotion_labeler is not None:
+            try:
+                user_frame = emotion_labeler.label_frame(user_frame)
+            except (OSError, ValueError) as error:
+                # As emoções finas são complementares: sua ausência degrada as
+                # features emocionais, mas não invalida a etapa.
+                logger.warning("Rotulação de emoções falhou e será omitida: %s", error)
+
+        return user_frame
 
     def run(self, context: StageContext) -> dict[str, Any]:
         """Executa a rotulação em dois níveis.

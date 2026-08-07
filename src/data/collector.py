@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from config.logging import get_logger
-from config.settings import CollectionConfig
+from config.settings import CollectionConfig, UserHistorySection
 from data.queries import SearchQuery, build_queries
 from data.reader import list_collected_users
 from data.writer import write_parquet
@@ -121,6 +121,33 @@ def _user_to_record(user: Any, salt: str) -> dict[str, Any]:
         "account_created_at": getattr(user, "created", None),
         "is_verified": bool(getattr(user, "verified", False)),
     }
+
+
+def _is_tweet_outside_window(tweet: Any, cutoff: datetime) -> bool:
+    """Indica se o tweet é anterior à janela de coleta configurada."""
+    created = tweet.date
+    return created is not None and created < cutoff
+
+
+def _is_tweet_excluded_by_config(tweet: Any, settings: UserHistorySection) -> bool:
+    """Indica se o tweet deve ser descartado por ser retweet ou resposta, conforme a config."""
+    if settings.exclude_retweets and getattr(tweet, "retweetedTweet", None) is not None:
+        return True
+    return bool(settings.exclude_replies and tweet.inReplyToTweetId is not None)
+
+
+def _should_skip_tweet(tweet: Any, settings: UserHistorySection, cutoff: datetime) -> bool:
+    """Indica se o tweet deve ser ignorado por estar fora da janela ou excluído pela config."""
+    return _is_tweet_outside_window(tweet, cutoff) or _is_tweet_excluded_by_config(tweet, settings)
+
+
+def _capture_metadata_once(
+    metadata: dict[str, Any], tweet: Any, salt: str, settings: UserHistorySection
+) -> dict[str, Any]:
+    """Captura os metadados públicos do usuário na primeira oportunidade, se configurado."""
+    if metadata or not settings.collect_user_metadata:
+        return metadata
+    return _user_to_record(tweet.user, salt)
 
 
 class TweetCollector:
@@ -303,22 +330,7 @@ class TweetCollector:
         settings = self.config.user_history
         cutoff = datetime.now(timezone.utc) - timedelta(days=settings.window_days)
 
-        records: list[dict[str, Any]] = []
-        metadata: dict[str, Any] = {}
-
-        async for tweet in api.user_tweets(raw_user_id, limit=settings.max_tweets_per_user):
-            if not metadata and settings.collect_user_metadata:
-                metadata = _user_to_record(tweet.user, self.salt)
-
-            created = tweet.date
-            if created is not None and created < cutoff:
-                continue
-            if settings.exclude_retweets and getattr(tweet, "retweetedTweet", None) is not None:
-                continue
-            if settings.exclude_replies and tweet.inReplyToTweetId is not None:
-                continue
-
-            records.append(_tweet_to_record(tweet, self.salt))
+        records, metadata = await self._fetch_history_records(api, raw_user_id, settings, cutoff)
 
         if len(records) < settings.min_tweets_per_user:
             logger.debug(
@@ -329,6 +341,25 @@ class TweetCollector:
             return pl.DataFrame(), metadata
 
         return pl.DataFrame(records), metadata
+
+    async def _fetch_history_records(
+        self,
+        api: API,
+        raw_user_id: int,
+        settings: UserHistorySection,
+        cutoff: datetime,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Percorre o histórico do usuário aplicando os filtros de janela e exclusão."""
+        records: list[dict[str, Any]] = []
+        metadata: dict[str, Any] = {}
+
+        async for tweet in api.user_tweets(raw_user_id, limit=settings.max_tweets_per_user):
+            metadata = _capture_metadata_once(metadata, tweet, self.salt, settings)
+            if _should_skip_tweet(tweet, settings, cutoff):
+                continue
+            records.append(_tweet_to_record(tweet, self.salt))
+
+        return records, metadata
 
     async def collect_all(self, candidates: list[CandidateUser]) -> pl.DataFrame:
         """Coleta o histórico de todos os candidatos ainda não coletados.
