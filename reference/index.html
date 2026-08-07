@@ -21276,7 +21276,11 @@ central para o projeto:</p>
 <span class="normal"><a href="#__codelineno-0-53">53</a></span>
 <span class="normal"><a href="#__codelineno-0-54">54</a></span>
 <span class="normal"><a href="#__codelineno-0-55">55</a></span>
-<span class="normal"><a href="#__codelineno-0-56">56</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="k">def</span><span class="w"> </span><span class="nf">strip_accents</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="normal"><a href="#__codelineno-0-56">56</a></span>
+<span class="normal"><a href="#__codelineno-0-57">57</a></span>
+<span class="normal"><a href="#__codelineno-0-58">58</a></span>
+<span class="normal"><a href="#__codelineno-0-59">59</a></span>
+<span class="normal"><a href="#__codelineno-0-60">60</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37"></a><span class="k">def</span><span class="w"> </span><span class="nf">strip_accents</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 </span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Remove os acentos de um texto.</span>
 </span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39"></a>
 </span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40"></a><span class="sd">    Parameters</span>
@@ -21295,7 +21299,11 @@ central para o projeto:</p>
 </span><span id="__span-0-53"><a id="__codelineno-0-53" name="__codelineno-0-53"></a><span class="sd">    &#39;solidao&#39;</span>
 </span><span id="__span-0-54"><a id="__codelineno-0-54" name="__codelineno-0-54"></a><span class="sd">    &quot;&quot;&quot;</span>
 </span><span id="__span-0-55"><a id="__codelineno-0-55" name="__codelineno-0-55"></a>    <span class="n">decomposed</span> <span class="o">=</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="s2">&quot;NFD&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
-</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56"></a>    <span class="k">return</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">char</span> <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">decomposed</span> <span class="k">if</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">category</span><span class="p">(</span><span class="n">char</span><span class="p">)</span> <span class="o">!=</span> <span class="s2">&quot;Mn&quot;</span><span class="p">)</span>
+</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56"></a>    <span class="n">stripped</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">char</span> <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">decomposed</span> <span class="k">if</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">category</span><span class="p">(</span><span class="n">char</span><span class="p">)</span> <span class="o">!=</span> <span class="s2">&quot;Mn&quot;</span><span class="p">)</span>
+</span><span id="__span-0-57"><a id="__codelineno-0-57" name="__codelineno-0-57"></a>    <span class="c1"># NFC recompõe sequências que a decomposição NFD separa sem serem</span>
+</span><span id="__span-0-58"><a id="__codelineno-0-58" name="__codelineno-0-58"></a>    <span class="c1"># diacríticos latinos (ex.: silabas Hangul viram Jamo), o que violaria a</span>
+</span><span id="__span-0-59"><a id="__codelineno-0-59" name="__codelineno-0-59"></a>    <span class="c1"># invariante de que remover acentos nunca aumenta o comprimento do texto.</span>
+</span><span id="__span-0-60"><a id="__codelineno-0-60" name="__codelineno-0-60"></a>    <span class="k">return</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="s2">&quot;NFC&quot;</span><span class="p">,</span> <span class="n">stripped</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -21403,81 +21411,81 @@ menção também casaria, e a substituição na ordem errada produziria
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-59">59</a></span>
-<span class="normal"><a href="#__codelineno-0-60">60</a></span>
-<span class="normal"><a href="#__codelineno-0-61">61</a></span>
-<span class="normal"><a href="#__codelineno-0-62">62</a></span>
-<span class="normal"><a href="#__codelineno-0-63">63</a></span>
-<span class="normal"><a href="#__codelineno-0-64">64</a></span>
-<span class="normal"><a href="#__codelineno-0-65">65</a></span>
-<span class="normal"><a href="#__codelineno-0-66">66</a></span>
-<span class="normal"><a href="#__codelineno-0-67">67</a></span>
-<span class="normal"><a href="#__codelineno-0-68">68</a></span>
-<span class="normal"><a href="#__codelineno-0-69">69</a></span>
-<span class="normal"><a href="#__codelineno-0-70">70</a></span>
-<span class="normal"><a href="#__codelineno-0-71">71</a></span>
-<span class="normal"><a href="#__codelineno-0-72">72</a></span>
-<span class="normal"><a href="#__codelineno-0-73">73</a></span>
-<span class="normal"><a href="#__codelineno-0-74">74</a></span>
-<span class="normal"><a href="#__codelineno-0-75">75</a></span>
-<span class="normal"><a href="#__codelineno-0-76">76</a></span>
-<span class="normal"><a href="#__codelineno-0-77">77</a></span>
-<span class="normal"><a href="#__codelineno-0-78">78</a></span>
-<span class="normal"><a href="#__codelineno-0-79">79</a></span>
-<span class="normal"><a href="#__codelineno-0-80">80</a></span>
-<span class="normal"><a href="#__codelineno-0-81">81</a></span>
-<span class="normal"><a href="#__codelineno-0-82">82</a></span>
-<span class="normal"><a href="#__codelineno-0-83">83</a></span>
-<span class="normal"><a href="#__codelineno-0-84">84</a></span>
-<span class="normal"><a href="#__codelineno-0-85">85</a></span>
-<span class="normal"><a href="#__codelineno-0-86">86</a></span>
-<span class="normal"><a href="#__codelineno-0-87">87</a></span>
-<span class="normal"><a href="#__codelineno-0-88">88</a></span>
-<span class="normal"><a href="#__codelineno-0-89">89</a></span>
-<span class="normal"><a href="#__codelineno-0-90">90</a></span>
-<span class="normal"><a href="#__codelineno-0-91">91</a></span>
-<span class="normal"><a href="#__codelineno-0-92">92</a></span>
-<span class="normal"><a href="#__codelineno-0-93">93</a></span>
-<span class="normal"><a href="#__codelineno-0-94">94</a></span>
-<span class="normal"><a href="#__codelineno-0-95">95</a></span>
-<span class="normal"><a href="#__codelineno-0-96">96</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-59"><a id="__codelineno-0-59" name="__codelineno-0-59"></a><span class="k">def</span><span class="w"> </span><span class="nf">normalize_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">NormalizationSection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-60"><a id="__codelineno-0-60" name="__codelineno-0-60"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Normaliza um tweet preservando a semântica (entrada de Transformers/LLM).</span>
-</span><span id="__span-0-61"><a id="__codelineno-0-61" name="__codelineno-0-61"></a>
-</span><span id="__span-0-62"><a id="__codelineno-0-62" name="__codelineno-0-62"></a><span class="sd">    A ordem das operações importa: e-mails são substituídos **antes** das</span>
-</span><span id="__span-0-63"><a id="__codelineno-0-63" name="__codelineno-0-63"></a><span class="sd">    menções, porque ``fulano@dominio.com`` contém um padrão que a regex de</span>
-</span><span id="__span-0-64"><a id="__codelineno-0-64" name="__codelineno-0-64"></a><span class="sd">    menção também casaria, e a substituição na ordem errada produziria</span>
-</span><span id="__span-0-65"><a id="__codelineno-0-65" name="__codelineno-0-65"></a><span class="sd">    ``fulano@user``.</span>
-</span><span id="__span-0-66"><a id="__codelineno-0-66" name="__codelineno-0-66"></a>
-</span><span id="__span-0-67"><a id="__codelineno-0-67" name="__codelineno-0-67"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-68"><a id="__codelineno-0-68" name="__codelineno-0-68"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-69"><a id="__codelineno-0-69" name="__codelineno-0-69"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-70"><a id="__codelineno-0-70" name="__codelineno-0-70"></a><span class="sd">        Texto bruto do tweet.</span>
-</span><span id="__span-0-71"><a id="__codelineno-0-71" name="__codelineno-0-71"></a><span class="sd">    config : NormalizationSection</span>
-</span><span id="__span-0-72"><a id="__codelineno-0-72" name="__codelineno-0-72"></a><span class="sd">        Seção ``normalization`` de ``configs/preprocessing.yaml``.</span>
-</span><span id="__span-0-73"><a id="__codelineno-0-73" name="__codelineno-0-73"></a>
-</span><span id="__span-0-74"><a id="__codelineno-0-74" name="__codelineno-0-74"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-75"><a id="__codelineno-0-75" name="__codelineno-0-75"></a><span class="sd">    -------</span>
-</span><span id="__span-0-76"><a id="__codelineno-0-76" name="__codelineno-0-76"></a><span class="sd">    str</span>
-</span><span id="__span-0-77"><a id="__codelineno-0-77" name="__codelineno-0-77"></a><span class="sd">        Texto normalizado, sem PII.</span>
-</span><span id="__span-0-78"><a id="__codelineno-0-78" name="__codelineno-0-78"></a>
-</span><span id="__span-0-79"><a id="__codelineno-0-79" name="__codelineno-0-79"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-80"><a id="__codelineno-0-80" name="__codelineno-0-80"></a><span class="sd">    --------</span>
-</span><span id="__span-0-81"><a id="__codelineno-0-81" name="__codelineno-0-81"></a><span class="sd">    &gt;&gt;&gt; from config.settings import NormalizationSection</span>
-</span><span id="__span-0-82"><a id="__codelineno-0-82" name="__codelineno-0-82"></a><span class="sd">    &gt;&gt;&gt; normalize_text(&quot;Oi @fulano veja http://x.com #saudemental&quot;, NormalizationSection())</span>
-</span><span id="__span-0-83"><a id="__codelineno-0-83" name="__codelineno-0-83"></a><span class="sd">    &#39;Oi @user veja URL saudemental&#39;</span>
-</span><span id="__span-0-84"><a id="__codelineno-0-84" name="__codelineno-0-84"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-85"><a id="__codelineno-0-85" name="__codelineno-0-85"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">text</span><span class="p">:</span>
-</span><span id="__span-0-86"><a id="__codelineno-0-86" name="__codelineno-0-86"></a>        <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-87"><a id="__codelineno-0-87" name="__codelineno-0-87"></a>
-</span><span id="__span-0-88"><a id="__codelineno-0-88" name="__codelineno-0-88"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">unicode_form</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
-</span><span id="__span-0-89"><a id="__codelineno-0-89" name="__codelineno-0-89"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">RETWEET_PATTERN</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
-</span><span id="__span-0-90"><a id="__codelineno-0-90" name="__codelineno-0-90"></a>
-</span><span id="__span-0-91"><a id="__codelineno-0-91" name="__codelineno-0-91"></a>    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">strip_control_chars</span><span class="p">:</span>
-</span><span id="__span-0-92"><a id="__codelineno-0-92" name="__codelineno-0-92"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">CONTROL_CHARS_PATTERN</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
-</span><span id="__span-0-93"><a id="__codelineno-0-93" name="__codelineno-0-93"></a>
-</span><span id="__span-0-94"><a id="__codelineno-0-94" name="__codelineno-0-94"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">_apply_pii_redaction</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-</span><span id="__span-0-95"><a id="__codelineno-0-95" name="__codelineno-0-95"></a>
-</span><span id="__span-0-96"><a id="__codelineno-0-96" name="__codelineno-0-96"></a>    <span class="k">return</span> <span class="n">_apply_normalization_options</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-63"> 63</a></span>
+<span class="normal"><a href="#__codelineno-0-64"> 64</a></span>
+<span class="normal"><a href="#__codelineno-0-65"> 65</a></span>
+<span class="normal"><a href="#__codelineno-0-66"> 66</a></span>
+<span class="normal"><a href="#__codelineno-0-67"> 67</a></span>
+<span class="normal"><a href="#__codelineno-0-68"> 68</a></span>
+<span class="normal"><a href="#__codelineno-0-69"> 69</a></span>
+<span class="normal"><a href="#__codelineno-0-70"> 70</a></span>
+<span class="normal"><a href="#__codelineno-0-71"> 71</a></span>
+<span class="normal"><a href="#__codelineno-0-72"> 72</a></span>
+<span class="normal"><a href="#__codelineno-0-73"> 73</a></span>
+<span class="normal"><a href="#__codelineno-0-74"> 74</a></span>
+<span class="normal"><a href="#__codelineno-0-75"> 75</a></span>
+<span class="normal"><a href="#__codelineno-0-76"> 76</a></span>
+<span class="normal"><a href="#__codelineno-0-77"> 77</a></span>
+<span class="normal"><a href="#__codelineno-0-78"> 78</a></span>
+<span class="normal"><a href="#__codelineno-0-79"> 79</a></span>
+<span class="normal"><a href="#__codelineno-0-80"> 80</a></span>
+<span class="normal"><a href="#__codelineno-0-81"> 81</a></span>
+<span class="normal"><a href="#__codelineno-0-82"> 82</a></span>
+<span class="normal"><a href="#__codelineno-0-83"> 83</a></span>
+<span class="normal"><a href="#__codelineno-0-84"> 84</a></span>
+<span class="normal"><a href="#__codelineno-0-85"> 85</a></span>
+<span class="normal"><a href="#__codelineno-0-86"> 86</a></span>
+<span class="normal"><a href="#__codelineno-0-87"> 87</a></span>
+<span class="normal"><a href="#__codelineno-0-88"> 88</a></span>
+<span class="normal"><a href="#__codelineno-0-89"> 89</a></span>
+<span class="normal"><a href="#__codelineno-0-90"> 90</a></span>
+<span class="normal"><a href="#__codelineno-0-91"> 91</a></span>
+<span class="normal"><a href="#__codelineno-0-92"> 92</a></span>
+<span class="normal"><a href="#__codelineno-0-93"> 93</a></span>
+<span class="normal"><a href="#__codelineno-0-94"> 94</a></span>
+<span class="normal"><a href="#__codelineno-0-95"> 95</a></span>
+<span class="normal"><a href="#__codelineno-0-96"> 96</a></span>
+<span class="normal"><a href="#__codelineno-0-97"> 97</a></span>
+<span class="normal"><a href="#__codelineno-0-98"> 98</a></span>
+<span class="normal"><a href="#__codelineno-0-99"> 99</a></span>
+<span class="normal"><a href="#__codelineno-0-100">100</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-63"><a id="__codelineno-0-63" name="__codelineno-0-63"></a><span class="k">def</span><span class="w"> </span><span class="nf">normalize_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">NormalizationSection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-0-64"><a id="__codelineno-0-64" name="__codelineno-0-64"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Normaliza um tweet preservando a semântica (entrada de Transformers/LLM).</span>
+</span><span id="__span-0-65"><a id="__codelineno-0-65" name="__codelineno-0-65"></a>
+</span><span id="__span-0-66"><a id="__codelineno-0-66" name="__codelineno-0-66"></a><span class="sd">    A ordem das operações importa: e-mails são substituídos **antes** das</span>
+</span><span id="__span-0-67"><a id="__codelineno-0-67" name="__codelineno-0-67"></a><span class="sd">    menções, porque ``fulano@dominio.com`` contém um padrão que a regex de</span>
+</span><span id="__span-0-68"><a id="__codelineno-0-68" name="__codelineno-0-68"></a><span class="sd">    menção também casaria, e a substituição na ordem errada produziria</span>
+</span><span id="__span-0-69"><a id="__codelineno-0-69" name="__codelineno-0-69"></a><span class="sd">    ``fulano@user``.</span>
+</span><span id="__span-0-70"><a id="__codelineno-0-70" name="__codelineno-0-70"></a>
+</span><span id="__span-0-71"><a id="__codelineno-0-71" name="__codelineno-0-71"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-72"><a id="__codelineno-0-72" name="__codelineno-0-72"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-73"><a id="__codelineno-0-73" name="__codelineno-0-73"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-74"><a id="__codelineno-0-74" name="__codelineno-0-74"></a><span class="sd">        Texto bruto do tweet.</span>
+</span><span id="__span-0-75"><a id="__codelineno-0-75" name="__codelineno-0-75"></a><span class="sd">    config : NormalizationSection</span>
+</span><span id="__span-0-76"><a id="__codelineno-0-76" name="__codelineno-0-76"></a><span class="sd">        Seção ``normalization`` de ``configs/preprocessing.yaml``.</span>
+</span><span id="__span-0-77"><a id="__codelineno-0-77" name="__codelineno-0-77"></a>
+</span><span id="__span-0-78"><a id="__codelineno-0-78" name="__codelineno-0-78"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-79"><a id="__codelineno-0-79" name="__codelineno-0-79"></a><span class="sd">    -------</span>
+</span><span id="__span-0-80"><a id="__codelineno-0-80" name="__codelineno-0-80"></a><span class="sd">    str</span>
+</span><span id="__span-0-81"><a id="__codelineno-0-81" name="__codelineno-0-81"></a><span class="sd">        Texto normalizado, sem PII.</span>
+</span><span id="__span-0-82"><a id="__codelineno-0-82" name="__codelineno-0-82"></a>
+</span><span id="__span-0-83"><a id="__codelineno-0-83" name="__codelineno-0-83"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-84"><a id="__codelineno-0-84" name="__codelineno-0-84"></a><span class="sd">    --------</span>
+</span><span id="__span-0-85"><a id="__codelineno-0-85" name="__codelineno-0-85"></a><span class="sd">    &gt;&gt;&gt; from config.settings import NormalizationSection</span>
+</span><span id="__span-0-86"><a id="__codelineno-0-86" name="__codelineno-0-86"></a><span class="sd">    &gt;&gt;&gt; normalize_text(&quot;Oi @fulano veja http://x.com #saudemental&quot;, NormalizationSection())</span>
+</span><span id="__span-0-87"><a id="__codelineno-0-87" name="__codelineno-0-87"></a><span class="sd">    &#39;Oi @user veja URL saudemental&#39;</span>
+</span><span id="__span-0-88"><a id="__codelineno-0-88" name="__codelineno-0-88"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-89"><a id="__codelineno-0-89" name="__codelineno-0-89"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">text</span><span class="p">:</span>
+</span><span id="__span-0-90"><a id="__codelineno-0-90" name="__codelineno-0-90"></a>        <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-91"><a id="__codelineno-0-91" name="__codelineno-0-91"></a>
+</span><span id="__span-0-92"><a id="__codelineno-0-92" name="__codelineno-0-92"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">unicodedata</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">unicode_form</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+</span><span id="__span-0-93"><a id="__codelineno-0-93" name="__codelineno-0-93"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">RETWEET_PATTERN</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+</span><span id="__span-0-94"><a id="__codelineno-0-94" name="__codelineno-0-94"></a>
+</span><span id="__span-0-95"><a id="__codelineno-0-95" name="__codelineno-0-95"></a>    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">strip_control_chars</span><span class="p">:</span>
+</span><span id="__span-0-96"><a id="__codelineno-0-96" name="__codelineno-0-96"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">CONTROL_CHARS_PATTERN</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+</span><span id="__span-0-97"><a id="__codelineno-0-97" name="__codelineno-0-97"></a>
+</span><span id="__span-0-98"><a id="__codelineno-0-98" name="__codelineno-0-98"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">_apply_pii_redaction</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+</span><span id="__span-0-99"><a id="__codelineno-0-99" name="__codelineno-0-99"></a>
+</span><span id="__span-0-100"><a id="__codelineno-0-100" name="__codelineno-0-100"></a>    <span class="k">return</span> <span class="n">_apply_normalization_options</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -21603,11 +21611,7 @@ sinal que o projeto procura.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-201">201</a></span>
-<span class="normal"><a href="#__codelineno-0-202">202</a></span>
-<span class="normal"><a href="#__codelineno-0-203">203</a></span>
-<span class="normal"><a href="#__codelineno-0-204">204</a></span>
-<span class="normal"><a href="#__codelineno-0-205">205</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-205">205</a></span>
 <span class="normal"><a href="#__codelineno-0-206">206</a></span>
 <span class="normal"><a href="#__codelineno-0-207">207</a></span>
 <span class="normal"><a href="#__codelineno-0-208">208</a></span>
@@ -21637,41 +21641,45 @@ sinal que o projeto procura.</p>
 <span class="normal"><a href="#__codelineno-0-232">232</a></span>
 <span class="normal"><a href="#__codelineno-0-233">233</a></span>
 <span class="normal"><a href="#__codelineno-0-234">234</a></span>
-<span class="normal"><a href="#__codelineno-0-235">235</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-201"><a id="__codelineno-0-201" name="__codelineno-0-201"></a><span class="k">def</span><span class="w"> </span><span class="nf">clean_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">CleaningSection</span><span class="p">,</span> <span class="n">stopwords</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-0-202"><a id="__codelineno-0-202" name="__codelineno-0-202"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Aplica a limpeza agressiva (entrada de TF-IDF, n-grams e léxicos).</span>
-</span><span id="__span-0-203"><a id="__codelineno-0-203" name="__codelineno-0-203"></a>
-</span><span id="__span-0-204"><a id="__codelineno-0-204" name="__codelineno-0-204"></a><span class="sd">    As stopwords da whitelist são preservadas mesmo estando na lista de</span>
-</span><span id="__span-0-205"><a id="__codelineno-0-205" name="__codelineno-0-205"></a><span class="sd">    remoção: pronomes de 1ª pessoa e negações são features centrais na</span>
-</span><span id="__span-0-206"><a id="__codelineno-0-206" name="__codelineno-0-206"></a><span class="sd">    literatura de detecção de depressão, e removê-los apagaria justamente o</span>
-</span><span id="__span-0-207"><a id="__codelineno-0-207" name="__codelineno-0-207"></a><span class="sd">    sinal que o projeto procura.</span>
-</span><span id="__span-0-208"><a id="__codelineno-0-208" name="__codelineno-0-208"></a>
-</span><span id="__span-0-209"><a id="__codelineno-0-209" name="__codelineno-0-209"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-210"><a id="__codelineno-0-210" name="__codelineno-0-210"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-211"><a id="__codelineno-0-211" name="__codelineno-0-211"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-212"><a id="__codelineno-0-212" name="__codelineno-0-212"></a><span class="sd">        Texto já normalizado.</span>
-</span><span id="__span-0-213"><a id="__codelineno-0-213" name="__codelineno-0-213"></a><span class="sd">    config : CleaningSection</span>
-</span><span id="__span-0-214"><a id="__codelineno-0-214" name="__codelineno-0-214"></a><span class="sd">        Seção ``cleaning`` de ``configs/preprocessing.yaml``.</span>
-</span><span id="__span-0-215"><a id="__codelineno-0-215" name="__codelineno-0-215"></a><span class="sd">    stopwords : frozenset of str</span>
-</span><span id="__span-0-216"><a id="__codelineno-0-216" name="__codelineno-0-216"></a><span class="sd">        Stopwords a remover.</span>
-</span><span id="__span-0-217"><a id="__codelineno-0-217" name="__codelineno-0-217"></a>
-</span><span id="__span-0-218"><a id="__codelineno-0-218" name="__codelineno-0-218"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-219"><a id="__codelineno-0-219" name="__codelineno-0-219"></a><span class="sd">    -------</span>
-</span><span id="__span-0-220"><a id="__codelineno-0-220" name="__codelineno-0-220"></a><span class="sd">    str</span>
-</span><span id="__span-0-221"><a id="__codelineno-0-221" name="__codelineno-0-221"></a><span class="sd">        Texto limpo, com tokens separados por espaço.</span>
-</span><span id="__span-0-222"><a id="__codelineno-0-222" name="__codelineno-0-222"></a>
-</span><span id="__span-0-223"><a id="__codelineno-0-223" name="__codelineno-0-223"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-224"><a id="__codelineno-0-224" name="__codelineno-0-224"></a><span class="sd">    --------</span>
-</span><span id="__span-0-225"><a id="__codelineno-0-225" name="__codelineno-0-225"></a><span class="sd">    &gt;&gt;&gt; from config.settings import CleaningSection</span>
-</span><span id="__span-0-226"><a id="__codelineno-0-226" name="__codelineno-0-226"></a><span class="sd">    &gt;&gt;&gt; clean_text(&quot;Eu não estou bem hoje!&quot;, CleaningSection(), frozenset({&quot;estou&quot;}))</span>
-</span><span id="__span-0-227"><a id="__codelineno-0-227" name="__codelineno-0-227"></a><span class="sd">    &#39;eu não bem hoje&#39;</span>
-</span><span id="__span-0-228"><a id="__codelineno-0-228" name="__codelineno-0-228"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-229"><a id="__codelineno-0-229" name="__codelineno-0-229"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">text</span><span class="p">:</span>
-</span><span id="__span-0-230"><a id="__codelineno-0-230" name="__codelineno-0-230"></a>        <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-231"><a id="__codelineno-0-231" name="__codelineno-0-231"></a>
-</span><span id="__span-0-232"><a id="__codelineno-0-232" name="__codelineno-0-232"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">_strip_and_lowercase</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-</span><span id="__span-0-233"><a id="__codelineno-0-233" name="__codelineno-0-233"></a>    <span class="n">tokens</span> <span class="o">=</span> <span class="n">_filter_tokens</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">stopwords</span><span class="p">)</span>
-</span><span id="__span-0-234"><a id="__codelineno-0-234" name="__codelineno-0-234"></a>
-</span><span id="__span-0-235"><a id="__codelineno-0-235" name="__codelineno-0-235"></a>    <span class="k">return</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-235">235</a></span>
+<span class="normal"><a href="#__codelineno-0-236">236</a></span>
+<span class="normal"><a href="#__codelineno-0-237">237</a></span>
+<span class="normal"><a href="#__codelineno-0-238">238</a></span>
+<span class="normal"><a href="#__codelineno-0-239">239</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-205"><a id="__codelineno-0-205" name="__codelineno-0-205"></a><span class="k">def</span><span class="w"> </span><span class="nf">clean_text</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">CleaningSection</span><span class="p">,</span> <span class="n">stopwords</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-0-206"><a id="__codelineno-0-206" name="__codelineno-0-206"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Aplica a limpeza agressiva (entrada de TF-IDF, n-grams e léxicos).</span>
+</span><span id="__span-0-207"><a id="__codelineno-0-207" name="__codelineno-0-207"></a>
+</span><span id="__span-0-208"><a id="__codelineno-0-208" name="__codelineno-0-208"></a><span class="sd">    As stopwords da whitelist são preservadas mesmo estando na lista de</span>
+</span><span id="__span-0-209"><a id="__codelineno-0-209" name="__codelineno-0-209"></a><span class="sd">    remoção: pronomes de 1ª pessoa e negações são features centrais na</span>
+</span><span id="__span-0-210"><a id="__codelineno-0-210" name="__codelineno-0-210"></a><span class="sd">    literatura de detecção de depressão, e removê-los apagaria justamente o</span>
+</span><span id="__span-0-211"><a id="__codelineno-0-211" name="__codelineno-0-211"></a><span class="sd">    sinal que o projeto procura.</span>
+</span><span id="__span-0-212"><a id="__codelineno-0-212" name="__codelineno-0-212"></a>
+</span><span id="__span-0-213"><a id="__codelineno-0-213" name="__codelineno-0-213"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-214"><a id="__codelineno-0-214" name="__codelineno-0-214"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-215"><a id="__codelineno-0-215" name="__codelineno-0-215"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-216"><a id="__codelineno-0-216" name="__codelineno-0-216"></a><span class="sd">        Texto já normalizado.</span>
+</span><span id="__span-0-217"><a id="__codelineno-0-217" name="__codelineno-0-217"></a><span class="sd">    config : CleaningSection</span>
+</span><span id="__span-0-218"><a id="__codelineno-0-218" name="__codelineno-0-218"></a><span class="sd">        Seção ``cleaning`` de ``configs/preprocessing.yaml``.</span>
+</span><span id="__span-0-219"><a id="__codelineno-0-219" name="__codelineno-0-219"></a><span class="sd">    stopwords : frozenset of str</span>
+</span><span id="__span-0-220"><a id="__codelineno-0-220" name="__codelineno-0-220"></a><span class="sd">        Stopwords a remover.</span>
+</span><span id="__span-0-221"><a id="__codelineno-0-221" name="__codelineno-0-221"></a>
+</span><span id="__span-0-222"><a id="__codelineno-0-222" name="__codelineno-0-222"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-223"><a id="__codelineno-0-223" name="__codelineno-0-223"></a><span class="sd">    -------</span>
+</span><span id="__span-0-224"><a id="__codelineno-0-224" name="__codelineno-0-224"></a><span class="sd">    str</span>
+</span><span id="__span-0-225"><a id="__codelineno-0-225" name="__codelineno-0-225"></a><span class="sd">        Texto limpo, com tokens separados por espaço.</span>
+</span><span id="__span-0-226"><a id="__codelineno-0-226" name="__codelineno-0-226"></a>
+</span><span id="__span-0-227"><a id="__codelineno-0-227" name="__codelineno-0-227"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-228"><a id="__codelineno-0-228" name="__codelineno-0-228"></a><span class="sd">    --------</span>
+</span><span id="__span-0-229"><a id="__codelineno-0-229" name="__codelineno-0-229"></a><span class="sd">    &gt;&gt;&gt; from config.settings import CleaningSection</span>
+</span><span id="__span-0-230"><a id="__codelineno-0-230" name="__codelineno-0-230"></a><span class="sd">    &gt;&gt;&gt; clean_text(&quot;Eu não estou bem hoje!&quot;, CleaningSection(), frozenset({&quot;estou&quot;}))</span>
+</span><span id="__span-0-231"><a id="__codelineno-0-231" name="__codelineno-0-231"></a><span class="sd">    &#39;eu não bem hoje&#39;</span>
+</span><span id="__span-0-232"><a id="__codelineno-0-232" name="__codelineno-0-232"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-233"><a id="__codelineno-0-233" name="__codelineno-0-233"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">text</span><span class="p">:</span>
+</span><span id="__span-0-234"><a id="__codelineno-0-234" name="__codelineno-0-234"></a>        <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-235"><a id="__codelineno-0-235" name="__codelineno-0-235"></a>
+</span><span id="__span-0-236"><a id="__codelineno-0-236" name="__codelineno-0-236"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">_strip_and_lowercase</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+</span><span id="__span-0-237"><a id="__codelineno-0-237" name="__codelineno-0-237"></a>    <span class="n">tokens</span> <span class="o">=</span> <span class="n">_filter_tokens</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">stopwords</span><span class="p">)</span>
+</span><span id="__span-0-238"><a id="__codelineno-0-238" name="__codelineno-0-238"></a>
+</span><span id="__span-0-239"><a id="__codelineno-0-239" name="__codelineno-0-239"></a>    <span class="k">return</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -21756,17 +21764,7 @@ sinal que o projeto procura.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-321">321</a></span>
-<span class="normal"><a href="#__codelineno-0-322">322</a></span>
-<span class="normal"><a href="#__codelineno-0-323">323</a></span>
-<span class="normal"><a href="#__codelineno-0-324">324</a></span>
-<span class="normal"><a href="#__codelineno-0-325">325</a></span>
-<span class="normal"><a href="#__codelineno-0-326">326</a></span>
-<span class="normal"><a href="#__codelineno-0-327">327</a></span>
-<span class="normal"><a href="#__codelineno-0-328">328</a></span>
-<span class="normal"><a href="#__codelineno-0-329">329</a></span>
-<span class="normal"><a href="#__codelineno-0-330">330</a></span>
-<span class="normal"><a href="#__codelineno-0-331">331</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-331">331</a></span>
 <span class="normal"><a href="#__codelineno-0-332">332</a></span>
 <span class="normal"><a href="#__codelineno-0-333">333</a></span>
 <span class="normal"><a href="#__codelineno-0-334">334</a></span>
@@ -21774,25 +21772,35 @@ sinal que o projeto procura.</p>
 <span class="normal"><a href="#__codelineno-0-336">336</a></span>
 <span class="normal"><a href="#__codelineno-0-337">337</a></span>
 <span class="normal"><a href="#__codelineno-0-338">338</a></span>
-<span class="normal"><a href="#__codelineno-0-339">339</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-321"><a id="__codelineno-0-321" name="__codelineno-0-321"></a><span class="k">def</span><span class="w"> </span><span class="nf">tokenize</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-</span><span id="__span-0-322"><a id="__codelineno-0-322" name="__codelineno-0-322"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tokeniza um texto por expressão regular (fallback sem spaCy).</span>
-</span><span id="__span-0-323"><a id="__codelineno-0-323" name="__codelineno-0-323"></a>
-</span><span id="__span-0-324"><a id="__codelineno-0-324" name="__codelineno-0-324"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-325"><a id="__codelineno-0-325" name="__codelineno-0-325"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-326"><a id="__codelineno-0-326" name="__codelineno-0-326"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-327"><a id="__codelineno-0-327" name="__codelineno-0-327"></a><span class="sd">        Texto de entrada.</span>
-</span><span id="__span-0-328"><a id="__codelineno-0-328" name="__codelineno-0-328"></a>
-</span><span id="__span-0-329"><a id="__codelineno-0-329" name="__codelineno-0-329"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-330"><a id="__codelineno-0-330" name="__codelineno-0-330"></a><span class="sd">    -------</span>
-</span><span id="__span-0-331"><a id="__codelineno-0-331" name="__codelineno-0-331"></a><span class="sd">    list of str</span>
-</span><span id="__span-0-332"><a id="__codelineno-0-332" name="__codelineno-0-332"></a><span class="sd">        Tokens alfabéticos, incluindo acentuados.</span>
+<span class="normal"><a href="#__codelineno-0-339">339</a></span>
+<span class="normal"><a href="#__codelineno-0-340">340</a></span>
+<span class="normal"><a href="#__codelineno-0-341">341</a></span>
+<span class="normal"><a href="#__codelineno-0-342">342</a></span>
+<span class="normal"><a href="#__codelineno-0-343">343</a></span>
+<span class="normal"><a href="#__codelineno-0-344">344</a></span>
+<span class="normal"><a href="#__codelineno-0-345">345</a></span>
+<span class="normal"><a href="#__codelineno-0-346">346</a></span>
+<span class="normal"><a href="#__codelineno-0-347">347</a></span>
+<span class="normal"><a href="#__codelineno-0-348">348</a></span>
+<span class="normal"><a href="#__codelineno-0-349">349</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-331"><a id="__codelineno-0-331" name="__codelineno-0-331"></a><span class="k">def</span><span class="w"> </span><span class="nf">tokenize</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+</span><span id="__span-0-332"><a id="__codelineno-0-332" name="__codelineno-0-332"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tokeniza um texto por expressão regular (fallback sem spaCy).</span>
 </span><span id="__span-0-333"><a id="__codelineno-0-333" name="__codelineno-0-333"></a>
-</span><span id="__span-0-334"><a id="__codelineno-0-334" name="__codelineno-0-334"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-335"><a id="__codelineno-0-335" name="__codelineno-0-335"></a><span class="sd">    --------</span>
-</span><span id="__span-0-336"><a id="__codelineno-0-336" name="__codelineno-0-336"></a><span class="sd">    &gt;&gt;&gt; tokenize(&quot;não estou bem, hoje!&quot;)</span>
-</span><span id="__span-0-337"><a id="__codelineno-0-337" name="__codelineno-0-337"></a><span class="sd">    [&#39;não&#39;, &#39;estou&#39;, &#39;bem&#39;, &#39;hoje&#39;]</span>
-</span><span id="__span-0-338"><a id="__codelineno-0-338" name="__codelineno-0-338"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-339"><a id="__codelineno-0-339" name="__codelineno-0-339"></a>    <span class="k">return</span> <span class="n">TOKEN_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+</span><span id="__span-0-334"><a id="__codelineno-0-334" name="__codelineno-0-334"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-335"><a id="__codelineno-0-335" name="__codelineno-0-335"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-336"><a id="__codelineno-0-336" name="__codelineno-0-336"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-337"><a id="__codelineno-0-337" name="__codelineno-0-337"></a><span class="sd">        Texto de entrada.</span>
+</span><span id="__span-0-338"><a id="__codelineno-0-338" name="__codelineno-0-338"></a>
+</span><span id="__span-0-339"><a id="__codelineno-0-339" name="__codelineno-0-339"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-340"><a id="__codelineno-0-340" name="__codelineno-0-340"></a><span class="sd">    -------</span>
+</span><span id="__span-0-341"><a id="__codelineno-0-341" name="__codelineno-0-341"></a><span class="sd">    list of str</span>
+</span><span id="__span-0-342"><a id="__codelineno-0-342" name="__codelineno-0-342"></a><span class="sd">        Tokens alfabéticos, incluindo acentuados.</span>
+</span><span id="__span-0-343"><a id="__codelineno-0-343" name="__codelineno-0-343"></a>
+</span><span id="__span-0-344"><a id="__codelineno-0-344" name="__codelineno-0-344"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-345"><a id="__codelineno-0-345" name="__codelineno-0-345"></a><span class="sd">    --------</span>
+</span><span id="__span-0-346"><a id="__codelineno-0-346" name="__codelineno-0-346"></a><span class="sd">    &gt;&gt;&gt; tokenize(&quot;não estou bem, hoje!&quot;)</span>
+</span><span id="__span-0-347"><a id="__codelineno-0-347" name="__codelineno-0-347"></a><span class="sd">    [&#39;não&#39;, &#39;estou&#39;, &#39;bem&#39;, &#39;hoje&#39;]</span>
+</span><span id="__span-0-348"><a id="__codelineno-0-348" name="__codelineno-0-348"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-349"><a id="__codelineno-0-349" name="__codelineno-0-349"></a>    <span class="k">return</span> <span class="n">TOKEN_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -21877,17 +21885,7 @@ sinal que o projeto procura.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-342">342</a></span>
-<span class="normal"><a href="#__codelineno-0-343">343</a></span>
-<span class="normal"><a href="#__codelineno-0-344">344</a></span>
-<span class="normal"><a href="#__codelineno-0-345">345</a></span>
-<span class="normal"><a href="#__codelineno-0-346">346</a></span>
-<span class="normal"><a href="#__codelineno-0-347">347</a></span>
-<span class="normal"><a href="#__codelineno-0-348">348</a></span>
-<span class="normal"><a href="#__codelineno-0-349">349</a></span>
-<span class="normal"><a href="#__codelineno-0-350">350</a></span>
-<span class="normal"><a href="#__codelineno-0-351">351</a></span>
-<span class="normal"><a href="#__codelineno-0-352">352</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-352">352</a></span>
 <span class="normal"><a href="#__codelineno-0-353">353</a></span>
 <span class="normal"><a href="#__codelineno-0-354">354</a></span>
 <span class="normal"><a href="#__codelineno-0-355">355</a></span>
@@ -21895,25 +21893,35 @@ sinal que o projeto procura.</p>
 <span class="normal"><a href="#__codelineno-0-357">357</a></span>
 <span class="normal"><a href="#__codelineno-0-358">358</a></span>
 <span class="normal"><a href="#__codelineno-0-359">359</a></span>
-<span class="normal"><a href="#__codelineno-0-360">360</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-342"><a id="__codelineno-0-342" name="__codelineno-0-342"></a><span class="k">def</span><span class="w"> </span><span class="nf">count_characters</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-0-343"><a id="__codelineno-0-343" name="__codelineno-0-343"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Conta os caracteres de um texto.</span>
-</span><span id="__span-0-344"><a id="__codelineno-0-344" name="__codelineno-0-344"></a>
-</span><span id="__span-0-345"><a id="__codelineno-0-345" name="__codelineno-0-345"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-346"><a id="__codelineno-0-346" name="__codelineno-0-346"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-347"><a id="__codelineno-0-347" name="__codelineno-0-347"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-348"><a id="__codelineno-0-348" name="__codelineno-0-348"></a><span class="sd">        Texto de entrada.</span>
-</span><span id="__span-0-349"><a id="__codelineno-0-349" name="__codelineno-0-349"></a>
-</span><span id="__span-0-350"><a id="__codelineno-0-350" name="__codelineno-0-350"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-351"><a id="__codelineno-0-351" name="__codelineno-0-351"></a><span class="sd">    -------</span>
-</span><span id="__span-0-352"><a id="__codelineno-0-352" name="__codelineno-0-352"></a><span class="sd">    int</span>
-</span><span id="__span-0-353"><a id="__codelineno-0-353" name="__codelineno-0-353"></a><span class="sd">        Número de caracteres.</span>
+<span class="normal"><a href="#__codelineno-0-360">360</a></span>
+<span class="normal"><a href="#__codelineno-0-361">361</a></span>
+<span class="normal"><a href="#__codelineno-0-362">362</a></span>
+<span class="normal"><a href="#__codelineno-0-363">363</a></span>
+<span class="normal"><a href="#__codelineno-0-364">364</a></span>
+<span class="normal"><a href="#__codelineno-0-365">365</a></span>
+<span class="normal"><a href="#__codelineno-0-366">366</a></span>
+<span class="normal"><a href="#__codelineno-0-367">367</a></span>
+<span class="normal"><a href="#__codelineno-0-368">368</a></span>
+<span class="normal"><a href="#__codelineno-0-369">369</a></span>
+<span class="normal"><a href="#__codelineno-0-370">370</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-352"><a id="__codelineno-0-352" name="__codelineno-0-352"></a><span class="k">def</span><span class="w"> </span><span class="nf">count_characters</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-0-353"><a id="__codelineno-0-353" name="__codelineno-0-353"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Conta os caracteres de um texto.</span>
 </span><span id="__span-0-354"><a id="__codelineno-0-354" name="__codelineno-0-354"></a>
-</span><span id="__span-0-355"><a id="__codelineno-0-355" name="__codelineno-0-355"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-356"><a id="__codelineno-0-356" name="__codelineno-0-356"></a><span class="sd">    --------</span>
-</span><span id="__span-0-357"><a id="__codelineno-0-357" name="__codelineno-0-357"></a><span class="sd">    &gt;&gt;&gt; count_characters(&quot;abc&quot;)</span>
-</span><span id="__span-0-358"><a id="__codelineno-0-358" name="__codelineno-0-358"></a><span class="sd">    3</span>
-</span><span id="__span-0-359"><a id="__codelineno-0-359" name="__codelineno-0-359"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-360"><a id="__codelineno-0-360" name="__codelineno-0-360"></a>    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+</span><span id="__span-0-355"><a id="__codelineno-0-355" name="__codelineno-0-355"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-356"><a id="__codelineno-0-356" name="__codelineno-0-356"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-357"><a id="__codelineno-0-357" name="__codelineno-0-357"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-358"><a id="__codelineno-0-358" name="__codelineno-0-358"></a><span class="sd">        Texto de entrada.</span>
+</span><span id="__span-0-359"><a id="__codelineno-0-359" name="__codelineno-0-359"></a>
+</span><span id="__span-0-360"><a id="__codelineno-0-360" name="__codelineno-0-360"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-361"><a id="__codelineno-0-361" name="__codelineno-0-361"></a><span class="sd">    -------</span>
+</span><span id="__span-0-362"><a id="__codelineno-0-362" name="__codelineno-0-362"></a><span class="sd">    int</span>
+</span><span id="__span-0-363"><a id="__codelineno-0-363" name="__codelineno-0-363"></a><span class="sd">        Número de caracteres.</span>
+</span><span id="__span-0-364"><a id="__codelineno-0-364" name="__codelineno-0-364"></a>
+</span><span id="__span-0-365"><a id="__codelineno-0-365" name="__codelineno-0-365"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a><span class="sd">    --------</span>
+</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a><span class="sd">    &gt;&gt;&gt; count_characters(&quot;abc&quot;)</span>
+</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a><span class="sd">    3</span>
+</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -21998,17 +22006,7 @@ sinal que o projeto procura.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-363">363</a></span>
-<span class="normal"><a href="#__codelineno-0-364">364</a></span>
-<span class="normal"><a href="#__codelineno-0-365">365</a></span>
-<span class="normal"><a href="#__codelineno-0-366">366</a></span>
-<span class="normal"><a href="#__codelineno-0-367">367</a></span>
-<span class="normal"><a href="#__codelineno-0-368">368</a></span>
-<span class="normal"><a href="#__codelineno-0-369">369</a></span>
-<span class="normal"><a href="#__codelineno-0-370">370</a></span>
-<span class="normal"><a href="#__codelineno-0-371">371</a></span>
-<span class="normal"><a href="#__codelineno-0-372">372</a></span>
-<span class="normal"><a href="#__codelineno-0-373">373</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-373">373</a></span>
 <span class="normal"><a href="#__codelineno-0-374">374</a></span>
 <span class="normal"><a href="#__codelineno-0-375">375</a></span>
 <span class="normal"><a href="#__codelineno-0-376">376</a></span>
@@ -22016,25 +22014,35 @@ sinal que o projeto procura.</p>
 <span class="normal"><a href="#__codelineno-0-378">378</a></span>
 <span class="normal"><a href="#__codelineno-0-379">379</a></span>
 <span class="normal"><a href="#__codelineno-0-380">380</a></span>
-<span class="normal"><a href="#__codelineno-0-381">381</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-363"><a id="__codelineno-0-363" name="__codelineno-0-363"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_hashtags</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-</span><span id="__span-0-364"><a id="__codelineno-0-364" name="__codelineno-0-364"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Extrai as hashtags de um texto.</span>
-</span><span id="__span-0-365"><a id="__codelineno-0-365" name="__codelineno-0-365"></a>
-</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a><span class="sd">        Texto bruto (antes do desempacotamento de hashtags).</span>
-</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>
-</span><span id="__span-0-371"><a id="__codelineno-0-371" name="__codelineno-0-371"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-372"><a id="__codelineno-0-372" name="__codelineno-0-372"></a><span class="sd">    -------</span>
-</span><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a><span class="sd">    list of str</span>
-</span><span id="__span-0-374"><a id="__codelineno-0-374" name="__codelineno-0-374"></a><span class="sd">        Termos das hashtags, sem o ``#`` e em minúsculas.</span>
+<span class="normal"><a href="#__codelineno-0-381">381</a></span>
+<span class="normal"><a href="#__codelineno-0-382">382</a></span>
+<span class="normal"><a href="#__codelineno-0-383">383</a></span>
+<span class="normal"><a href="#__codelineno-0-384">384</a></span>
+<span class="normal"><a href="#__codelineno-0-385">385</a></span>
+<span class="normal"><a href="#__codelineno-0-386">386</a></span>
+<span class="normal"><a href="#__codelineno-0-387">387</a></span>
+<span class="normal"><a href="#__codelineno-0-388">388</a></span>
+<span class="normal"><a href="#__codelineno-0-389">389</a></span>
+<span class="normal"><a href="#__codelineno-0-390">390</a></span>
+<span class="normal"><a href="#__codelineno-0-391">391</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_hashtags</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+</span><span id="__span-0-374"><a id="__codelineno-0-374" name="__codelineno-0-374"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Extrai as hashtags de um texto.</span>
 </span><span id="__span-0-375"><a id="__codelineno-0-375" name="__codelineno-0-375"></a>
-</span><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-377"><a id="__codelineno-0-377" name="__codelineno-0-377"></a><span class="sd">    --------</span>
-</span><span id="__span-0-378"><a id="__codelineno-0-378" name="__codelineno-0-378"></a><span class="sd">    &gt;&gt;&gt; extract_hashtags(&quot;dia difícil #Desabafo #saudemental&quot;)</span>
-</span><span id="__span-0-379"><a id="__codelineno-0-379" name="__codelineno-0-379"></a><span class="sd">    [&#39;desabafo&#39;, &#39;saudemental&#39;]</span>
-</span><span id="__span-0-380"><a id="__codelineno-0-380" name="__codelineno-0-380"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-381"><a id="__codelineno-0-381" name="__codelineno-0-381"></a>    <span class="k">return</span> <span class="p">[</span><span class="n">match</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">HASHTAG_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)]</span>
+</span><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-377"><a id="__codelineno-0-377" name="__codelineno-0-377"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-378"><a id="__codelineno-0-378" name="__codelineno-0-378"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-379"><a id="__codelineno-0-379" name="__codelineno-0-379"></a><span class="sd">        Texto bruto (antes do desempacotamento de hashtags).</span>
+</span><span id="__span-0-380"><a id="__codelineno-0-380" name="__codelineno-0-380"></a>
+</span><span id="__span-0-381"><a id="__codelineno-0-381" name="__codelineno-0-381"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-382"><a id="__codelineno-0-382" name="__codelineno-0-382"></a><span class="sd">    -------</span>
+</span><span id="__span-0-383"><a id="__codelineno-0-383" name="__codelineno-0-383"></a><span class="sd">    list of str</span>
+</span><span id="__span-0-384"><a id="__codelineno-0-384" name="__codelineno-0-384"></a><span class="sd">        Termos das hashtags, sem o ``#`` e em minúsculas.</span>
+</span><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a>
+</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a><span class="sd">    --------</span>
+</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a><span class="sd">    &gt;&gt;&gt; extract_hashtags(&quot;dia difícil #Desabafo #saudemental&quot;)</span>
+</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="sd">    [&#39;desabafo&#39;, &#39;saudemental&#39;]</span>
+</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a>    <span class="k">return</span> <span class="p">[</span><span class="n">match</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">HASHTAG_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)]</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -22127,17 +22135,7 @@ mas é justamente o sinal de que a menção original foi removida.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/preprocessing/text.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-389">389</a></span>
-<span class="normal"><a href="#__codelineno-0-390">390</a></span>
-<span class="normal"><a href="#__codelineno-0-391">391</a></span>
-<span class="normal"><a href="#__codelineno-0-392">392</a></span>
-<span class="normal"><a href="#__codelineno-0-393">393</a></span>
-<span class="normal"><a href="#__codelineno-0-394">394</a></span>
-<span class="normal"><a href="#__codelineno-0-395">395</a></span>
-<span class="normal"><a href="#__codelineno-0-396">396</a></span>
-<span class="normal"><a href="#__codelineno-0-397">397</a></span>
-<span class="normal"><a href="#__codelineno-0-398">398</a></span>
-<span class="normal"><a href="#__codelineno-0-399">399</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-399">399</a></span>
 <span class="normal"><a href="#__codelineno-0-400">400</a></span>
 <span class="normal"><a href="#__codelineno-0-401">401</a></span>
 <span class="normal"><a href="#__codelineno-0-402">402</a></span>
@@ -22161,41 +22159,51 @@ mas é justamente o sinal de que a menção original foi removida.</p>
 <span class="normal"><a href="#__codelineno-0-420">420</a></span>
 <span class="normal"><a href="#__codelineno-0-421">421</a></span>
 <span class="normal"><a href="#__codelineno-0-422">422</a></span>
-<span class="normal"><a href="#__codelineno-0-423">423</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="k">def</span><span class="w"> </span><span class="nf">contains_pii</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Verifica se restou alguma PII evidente no texto.</span>
-</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a>
-</span><span id="__span-0-392"><a id="__codelineno-0-392" name="__codelineno-0-392"></a><span class="sd">    Usado como salvaguarda antes de enviar conteúdo ao LLM</span>
-</span><span id="__span-0-393"><a id="__codelineno-0-393" name="__codelineno-0-393"></a><span class="sd">    (``llm.safeguards.require_pii_scrubbed_input``). Os placeholders da</span>
-</span><span id="__span-0-394"><a id="__codelineno-0-394" name="__codelineno-0-394"></a><span class="sd">    normalização são desconsiderados: ``@user`` casa com o padrão de menção,</span>
-</span><span id="__span-0-395"><a id="__codelineno-0-395" name="__codelineno-0-395"></a><span class="sd">    mas é justamente o sinal de que a menção original foi removida.</span>
-</span><span id="__span-0-396"><a id="__codelineno-0-396" name="__codelineno-0-396"></a>
-</span><span id="__span-0-397"><a id="__codelineno-0-397" name="__codelineno-0-397"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-398"><a id="__codelineno-0-398" name="__codelineno-0-398"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a><span class="sd">    text : str</span>
-</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a><span class="sd">        Texto a inspecionar.</span>
+<span class="normal"><a href="#__codelineno-0-423">423</a></span>
+<span class="normal"><a href="#__codelineno-0-424">424</a></span>
+<span class="normal"><a href="#__codelineno-0-425">425</a></span>
+<span class="normal"><a href="#__codelineno-0-426">426</a></span>
+<span class="normal"><a href="#__codelineno-0-427">427</a></span>
+<span class="normal"><a href="#__codelineno-0-428">428</a></span>
+<span class="normal"><a href="#__codelineno-0-429">429</a></span>
+<span class="normal"><a href="#__codelineno-0-430">430</a></span>
+<span class="normal"><a href="#__codelineno-0-431">431</a></span>
+<span class="normal"><a href="#__codelineno-0-432">432</a></span>
+<span class="normal"><a href="#__codelineno-0-433">433</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a><span class="k">def</span><span class="w"> </span><span class="nf">contains_pii</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Verifica se restou alguma PII evidente no texto.</span>
 </span><span id="__span-0-401"><a id="__codelineno-0-401" name="__codelineno-0-401"></a>
-</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a><span class="sd">    -------</span>
-</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a><span class="sd">    bool</span>
-</span><span id="__span-0-405"><a id="__codelineno-0-405" name="__codelineno-0-405"></a><span class="sd">        ``True`` se houver menção, URL, e-mail ou telefone reais.</span>
+</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a><span class="sd">    Usado como salvaguarda antes de enviar conteúdo ao LLM</span>
+</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a><span class="sd">    (``llm.safeguards.require_pii_scrubbed_input``). Os placeholders da</span>
+</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a><span class="sd">    normalização são desconsiderados: ``@user`` casa com o padrão de menção,</span>
+</span><span id="__span-0-405"><a id="__codelineno-0-405" name="__codelineno-0-405"></a><span class="sd">    mas é justamente o sinal de que a menção original foi removida.</span>
 </span><span id="__span-0-406"><a id="__codelineno-0-406" name="__codelineno-0-406"></a>
-</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a><span class="sd">    --------</span>
-</span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;meu email é a@b.com&quot;)</span>
-</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a><span class="sd">    True</span>
-</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;oi @user, veja URL&quot;)</span>
-</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a><span class="sd">    False</span>
-</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;hoje foi um dia difícil&quot;)</span>
-</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a><span class="sd">    False</span>
-</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>    <span class="n">candidate</span> <span class="o">=</span> <span class="n">text</span>
-</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a>    <span class="k">for</span> <span class="n">placeholder</span> <span class="ow">in</span> <span class="n">PII_PLACEHOLDERS</span><span class="p">:</span>
-</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a>        <span class="n">candidate</span> <span class="o">=</span> <span class="n">candidate</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">placeholder</span><span class="p">,</span> <span class="s2">&quot; &quot;</span><span class="p">)</span>
-</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>
-</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span>
-</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>        <span class="n">pattern</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span>
-</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>        <span class="k">for</span> <span class="n">pattern</span> <span class="ow">in</span> <span class="p">(</span><span class="n">EMAIL_PATTERN</span><span class="p">,</span> <span class="n">URL_PATTERN</span><span class="p">,</span> <span class="n">MENTION_PATTERN</span><span class="p">,</span> <span class="n">PHONE_PATTERN</span><span class="p">)</span>
-</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>    <span class="p">)</span>
+</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a><span class="sd">    text : str</span>
+</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a><span class="sd">        Texto a inspecionar.</span>
+</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a>
+</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a><span class="sd">    -------</span>
+</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a><span class="sd">    bool</span>
+</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a><span class="sd">        ``True`` se houver menção, URL, e-mail ou telefone reais.</span>
+</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>
+</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a><span class="sd">    --------</span>
+</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;meu email é a@b.com&quot;)</span>
+</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a><span class="sd">    True</span>
+</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;oi @user, veja URL&quot;)</span>
+</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a><span class="sd">    False</span>
+</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a><span class="sd">    &gt;&gt;&gt; contains_pii(&quot;hoje foi um dia difícil&quot;)</span>
+</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a><span class="sd">    False</span>
+</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a>    <span class="n">candidate</span> <span class="o">=</span> <span class="n">text</span>
+</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a>    <span class="k">for</span> <span class="n">placeholder</span> <span class="ow">in</span> <span class="n">PII_PLACEHOLDERS</span><span class="p">:</span>
+</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a>        <span class="n">candidate</span> <span class="o">=</span> <span class="n">candidate</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">placeholder</span><span class="p">,</span> <span class="s2">&quot; &quot;</span><span class="p">)</span>
+</span><span id="__span-0-429"><a id="__codelineno-0-429" name="__codelineno-0-429"></a>
+</span><span id="__span-0-430"><a id="__codelineno-0-430" name="__codelineno-0-430"></a>    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span>
+</span><span id="__span-0-431"><a id="__codelineno-0-431" name="__codelineno-0-431"></a>        <span class="n">pattern</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span>
+</span><span id="__span-0-432"><a id="__codelineno-0-432" name="__codelineno-0-432"></a>        <span class="k">for</span> <span class="n">pattern</span> <span class="ow">in</span> <span class="p">(</span><span class="n">EMAIL_PATTERN</span><span class="p">,</span> <span class="n">URL_PATTERN</span><span class="p">,</span> <span class="n">MENTION_PATTERN</span><span class="p">,</span> <span class="n">PHONE_PATTERN</span><span class="p">)</span>
+</span><span id="__span-0-433"><a id="__codelineno-0-433" name="__codelineno-0-433"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -26111,7 +26119,8 @@ o rótulo vira <code>indefinido</code>.</p>
 <span class="normal"><a href="#__codelineno-0-293">293</a></span>
 <span class="normal"><a href="#__codelineno-0-294">294</a></span>
 <span class="normal"><a href="#__codelineno-0-295">295</a></span>
-<span class="normal"><a href="#__codelineno-0-296">296</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-249"><a id="__codelineno-0-249" name="__codelineno-0-249"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_consensus</span><span class="p">(</span><span class="n">votes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">LabelVote</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="n">UserLabelingSection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="normal"><a href="#__codelineno-0-296">296</a></span>
+<span class="normal"><a href="#__codelineno-0-297">297</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-249"><a id="__codelineno-0-249" name="__codelineno-0-249"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_consensus</span><span class="p">(</span><span class="n">votes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">LabelVote</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="n">UserLabelingSection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
 </span><span id="__span-0-250"><a id="__codelineno-0-250" name="__codelineno-0-250"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Combina os votos das fontes num rótulo final.</span>
 </span><span id="__span-0-251"><a id="__codelineno-0-251" name="__codelineno-0-251"></a>
 </span><span id="__span-0-252"><a id="__codelineno-0-252" name="__codelineno-0-252"></a><span class="sd">    Parameters</span>
@@ -26147,18 +26156,19 @@ o rótulo vira <code>indefinido</code>.</p>
 </span><span id="__span-0-282"><a id="__codelineno-0-282" name="__codelineno-0-282"></a>        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">UserLabel</span><span class="o">.</span><span class="n">INDEFINIDO</span><span class="p">),</span> <span class="mf">0.0</span>
 </span><span id="__span-0-283"><a id="__codelineno-0-283" name="__codelineno-0-283"></a>
 </span><span id="__span-0-284"><a id="__codelineno-0-284" name="__codelineno-0-284"></a>    <span class="c1"># Empate é resolvido pela precedência de severidade, não pela ordem de</span>
-</span><span id="__span-0-285"><a id="__codelineno-0-285" name="__codelineno-0-285"></a>    <span class="c1"># inserção do dicionário — que seria arbitrária e não reprodutível.</span>
-</span><span id="__span-0-286"><a id="__codelineno-0-286" name="__codelineno-0-286"></a>    <span class="n">severity</span> <span class="o">=</span> <span class="p">{</span><span class="n">label</span><span class="p">:</span> <span class="n">index</span> <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">label</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">CLASS_PRECEDENCE</span><span class="p">)}</span>
-</span><span id="__span-0-287"><a id="__codelineno-0-287" name="__codelineno-0-287"></a>    <span class="n">best</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span>
-</span><span id="__span-0-288"><a id="__codelineno-0-288" name="__codelineno-0-288"></a>        <span class="n">scores</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span>
-</span><span id="__span-0-289"><a id="__codelineno-0-289" name="__codelineno-0-289"></a>        <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="n">item</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">severity</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">99</span><span class="p">)),</span>
-</span><span id="__span-0-290"><a id="__codelineno-0-290" name="__codelineno-0-290"></a>    <span class="p">)</span>
-</span><span id="__span-0-291"><a id="__codelineno-0-291" name="__codelineno-0-291"></a>    <span class="n">label</span><span class="p">,</span> <span class="n">weight</span> <span class="o">=</span> <span class="n">best</span>
-</span><span id="__span-0-292"><a id="__codelineno-0-292" name="__codelineno-0-292"></a>    <span class="n">agreement</span> <span class="o">=</span> <span class="n">weight</span> <span class="o">/</span> <span class="n">total</span>
-</span><span id="__span-0-293"><a id="__codelineno-0-293" name="__codelineno-0-293"></a>
-</span><span id="__span-0-294"><a id="__codelineno-0-294" name="__codelineno-0-294"></a>    <span class="k">if</span> <span class="n">agreement</span> <span class="o">&lt;</span> <span class="n">config</span><span class="o">.</span><span class="n">consensus</span><span class="o">.</span><span class="n">min_agreement</span><span class="p">:</span>
-</span><span id="__span-0-295"><a id="__codelineno-0-295" name="__codelineno-0-295"></a>        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">UserLabel</span><span class="o">.</span><span class="n">INDEFINIDO</span><span class="p">),</span> <span class="n">agreement</span>
-</span><span id="__span-0-296"><a id="__codelineno-0-296" name="__codelineno-0-296"></a>    <span class="k">return</span> <span class="n">label</span><span class="p">,</span> <span class="n">agreement</span>
+</span><span id="__span-0-285"><a id="__codelineno-0-285" name="__codelineno-0-285"></a>    <span class="c1"># inserção do dicionário — que seria arbitrária e não reprodutível. A</span>
+</span><span id="__span-0-286"><a id="__codelineno-0-286" name="__codelineno-0-286"></a>    <span class="c1"># concordância do empate soma o peso de todas as classes empatadas: elas</span>
+</span><span id="__span-0-287"><a id="__codelineno-0-287" name="__codelineno-0-287"></a>    <span class="c1"># convergem em não ser a classe menos grave, então dividir o peso entre</span>
+</span><span id="__span-0-288"><a id="__codelineno-0-288" name="__codelineno-0-288"></a>    <span class="c1"># si não deveria, sozinho, derrubar o rótulo para `indefinido`.</span>
+</span><span id="__span-0-289"><a id="__codelineno-0-289" name="__codelineno-0-289"></a>    <span class="n">max_score</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+</span><span id="__span-0-290"><a id="__codelineno-0-290" name="__codelineno-0-290"></a>    <span class="n">tied_labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">label</span> <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">scores</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">score</span> <span class="o">==</span> <span class="n">max_score</span><span class="p">]</span>
+</span><span id="__span-0-291"><a id="__codelineno-0-291" name="__codelineno-0-291"></a>    <span class="n">severity</span> <span class="o">=</span> <span class="p">{</span><span class="n">label</span><span class="p">:</span> <span class="n">index</span> <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">label</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">CLASS_PRECEDENCE</span><span class="p">)}</span>
+</span><span id="__span-0-292"><a id="__codelineno-0-292" name="__codelineno-0-292"></a>    <span class="n">label</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">tied_labels</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">candidate</span><span class="p">:</span> <span class="n">severity</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="mi">99</span><span class="p">))</span>
+</span><span id="__span-0-293"><a id="__codelineno-0-293" name="__codelineno-0-293"></a>    <span class="n">agreement</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="n">candidate</span><span class="p">]</span> <span class="k">for</span> <span class="n">candidate</span> <span class="ow">in</span> <span class="n">tied_labels</span><span class="p">)</span> <span class="o">/</span> <span class="n">total</span>
+</span><span id="__span-0-294"><a id="__codelineno-0-294" name="__codelineno-0-294"></a>
+</span><span id="__span-0-295"><a id="__codelineno-0-295" name="__codelineno-0-295"></a>    <span class="k">if</span> <span class="n">agreement</span> <span class="o">&lt;</span> <span class="n">config</span><span class="o">.</span><span class="n">consensus</span><span class="o">.</span><span class="n">min_agreement</span><span class="p">:</span>
+</span><span id="__span-0-296"><a id="__codelineno-0-296" name="__codelineno-0-296"></a>        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">UserLabel</span><span class="o">.</span><span class="n">INDEFINIDO</span><span class="p">),</span> <span class="n">agreement</span>
+</span><span id="__span-0-297"><a id="__codelineno-0-297" name="__codelineno-0-297"></a>    <span class="k">return</span> <span class="n">label</span><span class="p">,</span> <span class="n">agreement</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -26260,8 +26270,7 @@ o rótulo vira <code>indefinido</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/labeling/weak_supervision.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-375">375</a></span>
-<span class="normal"><a href="#__codelineno-0-376">376</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-376">376</a></span>
 <span class="normal"><a href="#__codelineno-0-377">377</a></span>
 <span class="normal"><a href="#__codelineno-0-378">378</a></span>
 <span class="normal"><a href="#__codelineno-0-379">379</a></span>
@@ -26300,47 +26309,48 @@ o rótulo vira <code>indefinido</code>.</p>
 <span class="normal"><a href="#__codelineno-0-412">412</a></span>
 <span class="normal"><a href="#__codelineno-0-413">413</a></span>
 <span class="normal"><a href="#__codelineno-0-414">414</a></span>
-<span class="normal"><a href="#__codelineno-0-415">415</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-375"><a id="__codelineno-0-375" name="__codelineno-0-375"></a><span class="k">def</span><span class="w"> </span><span class="nf">assign_user_labels</span><span class="p">(</span>
-</span><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a>    <span class="n">tweets</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
-</span><span id="__span-0-377"><a id="__codelineno-0-377" name="__codelineno-0-377"></a>    <span class="n">config</span><span class="p">:</span> <span class="n">UserLabelingSection</span><span class="p">,</span>
-</span><span id="__span-0-378"><a id="__codelineno-0-378" name="__codelineno-0-378"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
-</span><span id="__span-0-379"><a id="__codelineno-0-379" name="__codelineno-0-379"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Atribui o rótulo final a cada usuário.</span>
-</span><span id="__span-0-380"><a id="__codelineno-0-380" name="__codelineno-0-380"></a>
-</span><span id="__span-0-381"><a id="__codelineno-0-381" name="__codelineno-0-381"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-382"><a id="__codelineno-0-382" name="__codelineno-0-382"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-383"><a id="__codelineno-0-383" name="__codelineno-0-383"></a><span class="sd">    tweets : pl.DataFrame</span>
-</span><span id="__span-0-384"><a id="__codelineno-0-384" name="__codelineno-0-384"></a><span class="sd">        Tweets limpos e rotulados por sentimento.</span>
-</span><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a><span class="sd">    config : UserLabelingSection</span>
-</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a><span class="sd">        Seção ``user_labeling`` de ``configs/labeling.yaml``.</span>
-</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a>
-</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="sd">    -------</span>
-</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    pl.DataFrame</span>
-</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a><span class="sd">        Conforme :class:`schemas.users.UserLabelSchema`.</span>
-</span><span id="__span-0-392"><a id="__codelineno-0-392" name="__codelineno-0-392"></a>
-</span><span id="__span-0-393"><a id="__codelineno-0-393" name="__codelineno-0-393"></a><span class="sd">    Examples</span>
-</span><span id="__span-0-394"><a id="__codelineno-0-394" name="__codelineno-0-394"></a><span class="sd">    --------</span>
-</span><span id="__span-0-395"><a id="__codelineno-0-395" name="__codelineno-0-395"></a><span class="sd">    &gt;&gt;&gt; assign_user_labels(tweets, config.labeling.user_labeling)  # doctest: +SKIP</span>
-</span><span id="__span-0-396"><a id="__codelineno-0-396" name="__codelineno-0-396"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-397"><a id="__codelineno-0-397" name="__codelineno-0-397"></a>    <span class="n">require_columns</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="p">[</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">TEXT_CLEAN</span><span class="p">,</span> <span class="n">CREATED_AT</span><span class="p">],</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;rotulação de usuários&quot;</span><span class="p">)</span>
-</span><span id="__span-0-398"><a id="__codelineno-0-398" name="__codelineno-0-398"></a>
-</span><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a>    <span class="n">lexical</span> <span class="o">=</span> <span class="n">compute_lexical_evidence</span><span class="p">(</span><span class="n">tweets</span><span class="p">)</span>
-</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a>    <span class="n">persistence</span> <span class="o">=</span> <span class="n">compute_temporal_persistence</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-</span><span id="__span-0-401"><a id="__codelineno-0-401" name="__codelineno-0-401"></a>
-</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a>    <span class="c1"># Rótulo candidato: grupo de coleta mais frequente entre os tweets semente</span>
-</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a>    <span class="c1"># do usuário (os tweets de histórico têm `source_group` nulo).</span>
-</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a>    <span class="n">candidates</span> <span class="o">=</span> <span class="n">_collect_candidate_labels</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="n">lexical</span><span class="p">)</span>
-</span><span id="__span-0-405"><a id="__codelineno-0-405" name="__codelineno-0-405"></a>
-</span><span id="__span-0-406"><a id="__codelineno-0-406" name="__codelineno-0-406"></a>    <span class="n">merged</span> <span class="o">=</span> <span class="n">lexical</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">persistence</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a>        <span class="n">candidates</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span>
-</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a>    <span class="p">)</span>
-</span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a>
-</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a>    <span class="n">records</span> <span class="o">=</span> <span class="p">[</span><span class="n">_build_user_record</span><span class="p">(</span><span class="n">row</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">merged</span><span class="o">.</span><span class="n">iter_rows</span><span class="p">(</span><span class="n">named</span><span class="o">=</span><span class="kc">True</span><span class="p">)]</span>
-</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a>
-</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">records</span><span class="p">)</span>
-</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a>    <span class="n">distribution</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="n">USER_LABEL</span><span class="p">)</span><span class="o">.</span><span class="n">len</span><span class="p">()</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="s2">&quot;len&quot;</span><span class="p">,</span> <span class="n">descending</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Rótulos atribuídos: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="nb">dict</span><span class="p">(</span><span class="n">distribution</span><span class="o">.</span><span class="n">iter_rows</span><span class="p">()))</span>
-</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>    <span class="k">return</span> <span class="n">result</span>
+<span class="normal"><a href="#__codelineno-0-415">415</a></span>
+<span class="normal"><a href="#__codelineno-0-416">416</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a><span class="k">def</span><span class="w"> </span><span class="nf">assign_user_labels</span><span class="p">(</span>
+</span><span id="__span-0-377"><a id="__codelineno-0-377" name="__codelineno-0-377"></a>    <span class="n">tweets</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+</span><span id="__span-0-378"><a id="__codelineno-0-378" name="__codelineno-0-378"></a>    <span class="n">config</span><span class="p">:</span> <span class="n">UserLabelingSection</span><span class="p">,</span>
+</span><span id="__span-0-379"><a id="__codelineno-0-379" name="__codelineno-0-379"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-0-380"><a id="__codelineno-0-380" name="__codelineno-0-380"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Atribui o rótulo final a cada usuário.</span>
+</span><span id="__span-0-381"><a id="__codelineno-0-381" name="__codelineno-0-381"></a>
+</span><span id="__span-0-382"><a id="__codelineno-0-382" name="__codelineno-0-382"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-383"><a id="__codelineno-0-383" name="__codelineno-0-383"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-384"><a id="__codelineno-0-384" name="__codelineno-0-384"></a><span class="sd">    tweets : pl.DataFrame</span>
+</span><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a><span class="sd">        Tweets limpos e rotulados por sentimento.</span>
+</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a><span class="sd">    config : UserLabelingSection</span>
+</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a><span class="sd">        Seção ``user_labeling`` de ``configs/labeling.yaml``.</span>
+</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a>
+</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    -------</span>
+</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a><span class="sd">    pl.DataFrame</span>
+</span><span id="__span-0-392"><a id="__codelineno-0-392" name="__codelineno-0-392"></a><span class="sd">        Conforme :class:`schemas.users.UserLabelSchema`.</span>
+</span><span id="__span-0-393"><a id="__codelineno-0-393" name="__codelineno-0-393"></a>
+</span><span id="__span-0-394"><a id="__codelineno-0-394" name="__codelineno-0-394"></a><span class="sd">    Examples</span>
+</span><span id="__span-0-395"><a id="__codelineno-0-395" name="__codelineno-0-395"></a><span class="sd">    --------</span>
+</span><span id="__span-0-396"><a id="__codelineno-0-396" name="__codelineno-0-396"></a><span class="sd">    &gt;&gt;&gt; assign_user_labels(tweets, config.labeling.user_labeling)  # doctest: +SKIP</span>
+</span><span id="__span-0-397"><a id="__codelineno-0-397" name="__codelineno-0-397"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-398"><a id="__codelineno-0-398" name="__codelineno-0-398"></a>    <span class="n">require_columns</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="p">[</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">TEXT_CLEAN</span><span class="p">,</span> <span class="n">CREATED_AT</span><span class="p">],</span> <span class="n">context</span><span class="o">=</span><span class="s2">&quot;rotulação de usuários&quot;</span><span class="p">)</span>
+</span><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a>
+</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a>    <span class="n">lexical</span> <span class="o">=</span> <span class="n">compute_lexical_evidence</span><span class="p">(</span><span class="n">tweets</span><span class="p">)</span>
+</span><span id="__span-0-401"><a id="__codelineno-0-401" name="__codelineno-0-401"></a>    <span class="n">persistence</span> <span class="o">=</span> <span class="n">compute_temporal_persistence</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a>
+</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a>    <span class="c1"># Rótulo candidato: grupo de coleta mais frequente entre os tweets semente</span>
+</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a>    <span class="c1"># do usuário (os tweets de histórico têm `source_group` nulo).</span>
+</span><span id="__span-0-405"><a id="__codelineno-0-405" name="__codelineno-0-405"></a>    <span class="n">candidates</span> <span class="o">=</span> <span class="n">_collect_candidate_labels</span><span class="p">(</span><span class="n">tweets</span><span class="p">,</span> <span class="n">lexical</span><span class="p">)</span>
+</span><span id="__span-0-406"><a id="__codelineno-0-406" name="__codelineno-0-406"></a>
+</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a>    <span class="n">merged</span> <span class="o">=</span> <span class="n">lexical</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">persistence</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a>        <span class="n">candidates</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="n">USER_ID</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span>
+</span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a>    <span class="p">)</span>
+</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a>
+</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a>    <span class="n">records</span> <span class="o">=</span> <span class="p">[</span><span class="n">_build_user_record</span><span class="p">(</span><span class="n">row</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">merged</span><span class="o">.</span><span class="n">iter_rows</span><span class="p">(</span><span class="n">named</span><span class="o">=</span><span class="kc">True</span><span class="p">)]</span>
+</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a>
+</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">records</span><span class="p">)</span>
+</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>    <span class="n">distribution</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="n">USER_LABEL</span><span class="p">)</span><span class="o">.</span><span class="n">len</span><span class="p">()</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="s2">&quot;len&quot;</span><span class="p">,</span> <span class="n">descending</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Rótulos atribuídos: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="nb">dict</span><span class="p">(</span><span class="n">distribution</span><span class="o">.</span><span class="n">iter_rows</span><span class="p">()))</span>
+</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>    <span class="k">return</span> <span class="n">result</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
