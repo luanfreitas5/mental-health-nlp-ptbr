@@ -64,7 +64,7 @@ dependencies = [
     # Testes estatísticos: Wilcoxon, Friedman, McNemar (Análises Estatísticas)
     "scipy>=1.13",
     # Rastreamento de experimentos + Model Registry
-    "mlflow>=2.16",
+    "mlflow>=3.15.1",
     # Interpretabilidade — contribuição científica declarada (SHAP Values)
     "shap>=0.46",
 ]
