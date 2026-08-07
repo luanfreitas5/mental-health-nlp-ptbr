@@ -81,10 +81,11 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 # Restrições em dependências transitivas por segurança (pip-audit).
-# gitpython < 3.1.51 (puxado pelo mlflow) tem 2 CVEs corrigidos na 3.1.51:
-# GHSA-2f96-g7mh-g2hx e GHSA-v396-v7q4-x2qj.
+# gitpython < 3.1.58 (puxado pelo mlflow) tem CVEs corrigidos na 3.1.58:
+# GHSA-9rj7-rf2p-w77r, GHSA-4gmw-gg2m-w46p, GHSA-hh9p-6wh2-4mfc,
+# GHSA-wvpp-8hx9-p66j e GHSA-jm78-9fvv-mhgr.
 # numba < 0.57.1 (puxado por alguns pacotes) tem CVE-2024-28292.
-constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"]
+constraint-dependencies = ["gitpython>=3.1.58", "numba>=0.57.1"]
 
 # diskcache (puxado por dvc -> dvc-data) tem PYSEC-2026-2447 / CVE-2025-69872
 # (deserialização insegura via pickle para quem tiver acesso de escrita ao
@@ -94,6 +95,13 @@ constraint-dependencies = ["gitpython>=3.1.51", "numba>=0.57.1"]
 # recebe dados de terceiros), então o risco é aceito e ignorado
 # explicitamente no pip-audit (ver `make security` / `.github/workflows/ci.yml`)
 # até que o projeto publique uma correção.
+
+# cryptography < 50.0.0 tem PYSEC-2026-3552 (oráculo Bleichenbacher via erros/
+# tempo distinguíveis na decriptação de PKCS#7 EnvelopedData). É dependência
+# transitiva do mlflow, que fixa `cryptography>=43.0.0,<50` — não há como
+# subir a versão sem quebrar o mlflow 3.15.1 (a mais recente publicada). O
+# projeto não decripta PKCS#7 diretamente, então o risco é aceito e ignorado
+# explicitamente no pip-audit até que o mlflow eleve o teto da dependência.
 
 [[tool.uv.index]]
 name = "pytorch-cu124"

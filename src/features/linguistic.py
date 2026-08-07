@@ -19,6 +19,7 @@ Duas escolhas metodológicas explícitas:
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Mapping
 
 import polars as pl
 
@@ -189,7 +190,7 @@ def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
     return pl.DataFrame(records).sort(USER_ID)
 
 
-def _normalize_pronoun_groups(groups: dict[str, list[str]]) -> dict[str, set[str]]:
+def _normalize_pronoun_groups(groups: Mapping[str, Iterable[str]]) -> dict[str, set[str]]:
     """Normaliza os termos de cada grupo pronominal para comparação."""
     return {group: {normalize_term(term) for term in terms} for group, terms in groups.items()}
 

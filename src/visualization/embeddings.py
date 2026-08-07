@@ -13,6 +13,7 @@ virassem features, isso passaria a ser vazamento.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 
 import matplotlib.pyplot as plt
@@ -205,7 +206,7 @@ def _build_similarity_graph(
     return graph
 
 
-def _class_node_colors(graph: Any, class_order: list[str], palette: list[str]) -> list[str]:
+def _class_node_colors(graph: Any, class_order: Sequence[str], palette: list[str]) -> list[str]:
     """Mapeia cada nó do grafo para a cor de sua classe."""
     color_by_class = dict(zip(class_order, palette, strict=False))
     return [color_by_class.get(graph.nodes[node]["label"], "#8C8C8C") for node in graph]

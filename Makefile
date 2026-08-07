@@ -73,7 +73,7 @@ typecheck:  ## Type checking estático (basedPyright)
 
 security:  ## Análise de segurança (bandit + pip-audit)
 	$(UV) run bandit -r src -c pyproject.toml
-	$(UV) run pip-audit --ignore-vuln PYSEC-2026-2447
+	$(UV) run pip-audit --ignore-vuln PYSEC-2026-2447 --ignore-vuln PYSEC-2026-3552
 
 deadcode:  ## Detecta código morto (vulture)
 	$(UV) run vulture src
