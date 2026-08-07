@@ -322,9 +322,8 @@ def build_user_features_raw(
         result = _join_psychological_group(result, enabled, config, psychological_scores)
 
     result = _promote_night_activity_column(result)
-    result = _filter_min_tweets(result, config.aggregation.min_tweets_per_user)
 
-    return result.sort(USER_ID)
+    return _filter_min_tweets(result, config.aggregation.min_tweets_per_user).sort(USER_ID)
 
 
 def finalize_user_features(

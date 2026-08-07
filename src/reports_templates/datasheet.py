@@ -79,9 +79,8 @@ def build_datasheet(config: Config, paths: ProjectPaths) -> str:
     privacy = config.general.privacy
 
     summary = _load_features_summary(paths)
-    labeling = _load_labeling_quality(paths)
 
-    distribution = labeling.get("distribuicao_classes", {})
+    distribution = _load_labeling_quality(paths).get("distribuicao_classes", {})
     total_users = _resolve_total_users(summary, distribution)
 
     lines: list[str] = [

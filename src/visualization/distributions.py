@@ -108,8 +108,7 @@ def plot_class_distribution(labels: pl.DataFrame, column: str = USER_LABEL) -> A
 
 def _plot_word_frequency_panel(axis: Any, texts: list[str], class_name: str, top_n: int) -> None:
     """Plota o painel de palavras mais frequentes de uma classe."""
-    counter = Counter(token for text in texts for token in str(text).split())
-    common = counter.most_common(top_n)
+    common = Counter(token for text in texts for token in text.split()).most_common(top_n)
     if not common:
         axis.set_visible(False)
         return
@@ -173,7 +172,7 @@ def _plot_ngram_panel(axis: Any, texts: list[str], class_name: str, n: int, top_
     """Plota o painel de n-grams mais frequentes de uma classe."""
     counter: Counter[str] = Counter()
     for text in texts:
-        tokens = str(text).split()
+        tokens = text.split()
         counter.update(
             " ".join(tokens[position : position + n]) for position in range(len(tokens) - n + 1)
         )
@@ -243,7 +242,7 @@ def _plot_wordcloud_panel(
 ) -> None:
     """Plota a nuvem de palavras de uma classe, se houver corpus não vazio."""
     axis.axis("off")
-    corpus = " ".join(str(text) for text in texts).strip()
+    corpus = " ".join(text for text in texts).strip()
     if not corpus:
         return
 

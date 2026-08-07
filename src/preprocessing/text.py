@@ -92,9 +92,8 @@ def normalize_text(text: str, config: NormalizationSection) -> str:
         result = CONTROL_CHARS_PATTERN.sub(" ", result)
 
     result = _apply_pii_redaction(result, config)
-    result = _apply_normalization_options(result, config)
 
-    return result.strip()
+    return _apply_normalization_options(result, config).strip()
 
 
 def _apply_pii_redaction(text: str, config: NormalizationSection) -> str:

@@ -188,9 +188,12 @@ def compute_audience(metadata: pl.DataFrame, *, log_transform: bool = True) -> p
 
     result = metadata.select([USER_ID, *available])
     result = _add_follower_following_ratio(result, available)
-    result = _rename_audience_columns(result, available, log_transform=log_transform)
 
-    return result.drop(available).sort(USER_ID)
+    return (
+        _rename_audience_columns(result, available, log_transform=log_transform)
+        .drop(available)
+        .sort(USER_ID)
+    )
 
 
 def _add_follower_following_ratio(result: pl.DataFrame, available: list[str]) -> pl.DataFrame:

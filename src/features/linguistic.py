@@ -141,7 +141,7 @@ def compute_text_length(tweets: pl.DataFrame) -> pl.DataFrame:
 
 def _tokenize_user_text(texts: list[str]) -> list[str]:
     """Tokeniza os textos de um usuário em uma lista única de tokens (sem normalização)."""
-    return [token for text in texts for token in str(text).split() if token]
+    return [token for text in texts for token in text.split() if token]
 
 
 def _build_diversity_record(user_id: str, tokens: list[str]) -> dict[str, float | str]:
@@ -196,7 +196,7 @@ def _normalize_pronoun_groups(groups: dict[str, list[str]]) -> dict[str, set[str
 
 def _tokenize_user_text_normalized(texts: list[str]) -> list[str]:
     """Tokeniza e normaliza os textos de um usuário em uma lista única de tokens."""
-    return [normalize_term(token) for text in texts for token in str(text).split() if token]
+    return [normalize_term(token) for text in texts for token in text.split() if token]
 
 
 def _count_pronoun_groups(
