@@ -1,7 +1,9 @@
 # =============================================================================
-# Tests — pytest na matriz Python (3.10–3.12) × SO (ubuntu/macos/windows).
+# Tests — pytest na matriz Python (3.10–3.13) × SO (ubuntu/macos/windows).
 # Cobertura mínima de 80% é garantida pelo fail_under do coverage (pyproject).
 # O upload para o Codecov roda apenas uma vez (ubuntu + 3.12).
+# Python 3.14 fica de fora até o numba (dependência transitiva do shap)
+# publicar suporte a ela — ver https://github.com/numba/numba/issues.
 # =============================================================================
 name: Tests
 
@@ -22,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
 

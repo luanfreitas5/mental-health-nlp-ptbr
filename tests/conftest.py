@@ -118,11 +118,16 @@ def make_tweets(
                 )
                 created = origin + timedelta(days=int(generator.integers(0, 200)), hours=hour - 12)
 
+                # O índice do tweet entra no texto para que cada publicação
+                # seja única: sem isso, o ciclo pelo pool de frases produz
+                # duplicatas exatas dentro do usuário, que a deduplicação
+                # remove e derrubam a contagem abaixo do filtro de atividade
+                # (>= 30 tweets/usuário).
                 records.append(
                     {
                         "user_id": user_id,
                         "tweet_id": f"u_{class_index}{user_index:02d}{tweet_index:04d}{'b' * 6}",
-                        "text": str(pool[tweet_index % len(pool)]),
+                        "text": f"{pool[tweet_index % len(pool)]} ({tweet_index})",
                         "created_at": created,
                         "language": "pt",
                         "is_reply": bool(generator.random() < 0.3),

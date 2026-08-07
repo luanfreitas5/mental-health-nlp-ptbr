@@ -282,14 +282,15 @@ def resolve_consensus(votes: list[LabelVote], config: UserLabelingSection) -> tu
         return str(UserLabel.INDEFINIDO), 0.0
 
     # Empate é resolvido pela precedência de severidade, não pela ordem de
-    # inserção do dicionário — que seria arbitrária e não reprodutível.
+    # inserção do dicionário — que seria arbitrária e não reprodutível. A
+    # concordância do empate soma o peso de todas as classes empatadas: elas
+    # convergem em não ser a classe menos grave, então dividir o peso entre
+    # si não deveria, sozinho, derrubar o rótulo para `indefinido`.
+    max_score = max(scores.values())
+    tied_labels = [label for label, score in scores.items() if score == max_score]
     severity = {label: index for index, label in enumerate(CLASS_PRECEDENCE)}
-    best = min(
-        scores.items(),
-        key=lambda item: (-item[1], severity.get(item[0], 99)),
-    )
-    label, weight = best
-    agreement = weight / total
+    label = min(tied_labels, key=lambda candidate: severity.get(candidate, 99))
+    agreement = sum(scores[candidate] for candidate in tied_labels) / total
 
     if agreement < config.consensus.min_agreement:
         return str(UserLabel.INDEFINIDO), agreement

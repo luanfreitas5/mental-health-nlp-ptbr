@@ -53,7 +53,11 @@ def strip_accents(text: str) -> str:
     'solidao'
     """
     decomposed = unicodedata.normalize("NFD", text)
-    return "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+    stripped = "".join(char for char in decomposed if unicodedata.category(char) != "Mn")
+    # NFC recompõe sequências que a decomposição NFD separa sem serem
+    # diacríticos latinos (ex.: silabas Hangul viram Jamo), o que violaria a
+    # invariante de que remover acentos nunca aumenta o comprimento do texto.
+    return unicodedata.normalize("NFC", stripped)
 
 
 def normalize_text(text: str, config: NormalizationSection) -> str:
@@ -284,11 +288,12 @@ def _filter_tokens(text: str, config: CleaningSection, stopwords: frozenset[str]
         Tokens filtrados.
     """
     whitelist = {term.lower() for term in config.stopwords_whitelist}
+    normalized_stopwords = frozenset(strip_accents(stopword) for stopword in stopwords)
     tokens: list[str] = []
     for token in WHITESPACE_PATTERN.split(text):
         if _is_token_too_short(token, config):
             continue
-        if _is_removable_stopword(token, config, stopwords, whitelist):
+        if _is_removable_stopword(token, config, normalized_stopwords, whitelist):
             continue
         tokens.append(token)
 
@@ -303,18 +308,23 @@ def _is_token_too_short(token: str, config: CleaningSection) -> bool:
 def _is_removable_stopword(
     token: str,
     config: CleaningSection,
-    stopwords: frozenset[str],
+    normalized_stopwords: frozenset[str],
     whitelist: set[str],
 ) -> bool:
     """Verifica se o token é uma stopword removível (fora da whitelist).
 
-    A lista de stopwords é comparada com e sem acento: em rede social, "não"
-    e "nao" aparecem com frequência semelhante.
+    A comparação ignora acentos dos dois lados: em rede social, "não" e "nao"
+    aparecem com frequência semelhante.
+
+    Parameters
+    ----------
+    normalized_stopwords : frozenset of str
+        Stopwords já sem acento (ver :func:`_filter_tokens`).
     """
     return bool(
         config.remove_stopwords
         and token not in whitelist
-        and (token in stopwords or strip_accents(token) in stopwords)
+        and strip_accents(token) in normalized_stopwords
     )
 
 

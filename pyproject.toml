@@ -9,7 +9,7 @@ name = "mental-health-nlp-ptbr"
 version = "0.2.0"
 description = "Detecção longitudinal de sinais de depressão e ideação suicida em redes sociais com Transformers e Modelos de Linguagem."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"  # numba (dependência transitiva do shap) ainda não suporta 3.14
 license = { text = "MIT" }
 authors = [{ name = "Luan Freitas", email = "luan.mgf@gmail.com" }]
 keywords = [
