@@ -176,7 +176,7 @@ dev = [
     # Testes
     "pytest>=8.2",                  # Um framework de teste para Python
     "pytest-cov>=5.0",              # Um plugin para pytest que fornece cobertura de código
-    "hypothesis>=6.100",            # Um framework de teste property-based para Python
+    "hypothesis>=6.165.0",            # Um framework de teste property-based para Python
     # Notebooks
     "nbqa>=1.8",                    # Um utilitário para aplicar linters a notebooks do Jupyter
     "nbstripout>=0.7",              # Um utilitário para remover saídas e metadados de notebooks do Jupyter
