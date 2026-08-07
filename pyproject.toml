@@ -40,7 +40,7 @@ classifiers = [ # https://pypi.org/classifiers/
 # --- Dependências de runtime (instale apenas o que o projeto precisar) -------
 dependencies = [
     # Manipulação de dados (preferência: polars lazy) + storage colunar
-    "polars>=1.0",
+    "polars>=1.43.2",
     "pyarrow>=16.0",
     "numpy>=1.26",
     "pandas>=2.2",                  # exigido pelo seaborn e pela interop do sklearn
