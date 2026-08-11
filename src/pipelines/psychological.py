@@ -12,12 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import polars as pl
-
 from config.logging import get_logger
 from config.settings import Config
-from constants.columns import USER_ID
-from data.reader import list_collected_users, read_partitioned, select_pending_users
+from data.reader import (
+    count_partitioned_rows,
+    list_collected_users,
+    read_user_partition,
+    select_pending_users,
+)
 from data.writer import write_user_partition
 from exceptions.model import LLMUnavailableError, MissingDependencyError
 from labeling.llm import PsychologicalExtractor
@@ -46,12 +48,11 @@ class PsychologicalStage(PipelineStage):
         """Exige os tweets limpos da etapa de pré-processamento."""
         return [context.paths.data.tweets_clean]
 
-    def _load_source_tweets(self, context: StageContext) -> pl.DataFrame:
-        """Carrega os tweets rotulados, se existirem, ou os tweets limpos."""
+    def _resolve_source_dir(self, context: StageContext) -> Path:
+        """Aponta para os tweets rotulados, se existirem, ou os tweets limpos."""
         paths = context.paths
         labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
-        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
-        return read_partitioned(source, stage="label" if labeled_available else "preprocess")
+        return paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
 
     def _create_extractor(self, config: Config) -> PsychologicalExtractor:
         """Instancia o extrator e garante que o modelo Ollama está disponível."""
@@ -63,17 +64,14 @@ class PsychologicalStage(PipelineStage):
         self,
         context: StageContext,
         extractor: PsychologicalExtractor,
-        tweets: pl.DataFrame,
+        source_dir: Path,
         pending: list[str],
     ) -> None:
         """Extrai e grava o vetor psicológico de cada usuário pendente."""
         paths = context.paths
-        groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-            USER_ID, as_dict=True, maintain_order=True
-        )
         for user_id in track(pending, "Extraindo vetor psicológico"):
-            user_frame = groups.get((user_id,))
-            if user_frame is None or user_frame.is_empty():
+            user_frame = read_user_partition(source_dir, user_id)
+            if user_frame.is_empty():
                 continue
 
             scores = extractor.extract_frame(user_frame)
@@ -112,14 +110,11 @@ class PsychologicalStage(PipelineStage):
             return {"skipped": True, "reason": "desativada na configuração"}
 
         # Prefere os tweets já rotulados (têm sentimento), mas funciona sem eles.
-        tweets = self._load_source_tweets(context)
+        source_dir = self._resolve_source_dir(context)
 
+        available = list_collected_users(source_dir)
         already_processed = list_collected_users(paths.data.psychological_scores)
-        pending = select_pending_users(
-            set(tweets[USER_ID].unique().to_list()),
-            already_processed,
-            context.option("limit_users"),
-        )
+        pending = select_pending_users(available, already_processed, context.option("limit_users"))
         logger.info(
             "Extração psicológica: %d usuários já processados, %d pendentes nesta execução.",
             len(already_processed),
@@ -137,17 +132,16 @@ class PsychologicalStage(PipelineStage):
                 )
                 return {"skipped": True, "reason": str(error)}
 
-            self._extract_pending_users(context, extractor, tweets, pending)
+            self._extract_pending_users(context, extractor, source_dir, pending)
 
         processed_users = list_collected_users(paths.data.psychological_scores)
         if not processed_users:
             logger.warning("Nenhum vetor psicológico válido foi produzido.")
             return {"skipped": True, "reason": "nenhuma resposta válida do LLM"}
 
-        scores = read_partitioned(paths.data.psychological_scores)
         return {
-            "n_lotes": scores.height,
-            "n_usuarios": scores[USER_ID].n_unique(),
+            "n_lotes": count_partitioned_rows(paths.data.psychological_scores),
+            "n_usuarios": len(processed_users),
             "usuarios_processados_nesta_execucao": len(pending),
             "modelo": config.llm.psychological_features.model,
             "versao_prompt": config.llm.prompts.version,

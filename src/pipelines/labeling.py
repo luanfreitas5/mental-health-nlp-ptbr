@@ -8,8 +8,12 @@ from typing import Any, cast
 import polars as pl
 
 from config.logging import get_logger
-from constants.columns import USER_ID
-from data.reader import list_collected_users, read_partitioned, select_pending_users
+from data.reader import (
+    list_collected_users,
+    read_partitioned,
+    read_user_partition,
+    select_pending_users,
+)
 from data.writer import write_parquet, write_user_partition
 from labeling.emotion import EmotionLabeler
 from labeling.sentiment import SentimentLabeler
@@ -56,13 +60,9 @@ class LabelingStage(PipelineStage):
         config = context.config
         paths = context.paths
 
-        clean = read_partitioned(paths.data.tweets_clean, stage="preprocess")
+        available = list_collected_users(paths.data.tweets_clean)
         already_processed = list_collected_users(paths.data.tweets_labeled)
-        pending = select_pending_users(
-            set(clean[USER_ID].unique().to_list()),
-            already_processed,
-            context.option("limit_users"),
-        )
+        pending = select_pending_users(available, already_processed, context.option("limit_users"))
         logger.info(
             "Rotulação por tweet: %d usuários já processados, %d pendentes nesta execução.",
             len(already_processed),
@@ -73,12 +73,13 @@ class LabelingStage(PipelineStage):
 
         sentiment_labeler, emotion_labeler = self._build_labelers(config)
 
-        groups = clean.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-            USER_ID, as_dict=True, maintain_order=True
-        )
         for user_id in track(pending, "Rotulando usuários (sentimento/emoção)"):
             self._label_and_write_user(
-                user_id, groups, sentiment_labeler, emotion_labeler, paths.data.tweets_labeled
+                user_id,
+                paths.data.tweets_clean,
+                sentiment_labeler,
+                emotion_labeler,
+                paths.data.tweets_labeled,
             )
 
     def _build_labelers(self, config: Any) -> tuple[SentimentLabeler | None, EmotionLabeler | None]:
@@ -95,14 +96,14 @@ class LabelingStage(PipelineStage):
     def _label_and_write_user(
         self,
         user_id: str,
-        groups: dict[Any, pl.DataFrame],
+        clean_dir: Path,
         sentiment_labeler: SentimentLabeler | None,
         emotion_labeler: EmotionLabeler | None,
         labeled_dir: Path,
     ) -> None:
         """Rotula e grava o particionamento de um único usuário, se houver tweets pendentes."""
-        user_frame = groups.get((user_id,))
-        if user_frame is None or user_frame.is_empty():
+        user_frame = read_user_partition(clean_dir, user_id)
+        if user_frame.is_empty():
             return
 
         user_frame = self._label_user_frame(user_frame, sentiment_labeler, emotion_labeler)

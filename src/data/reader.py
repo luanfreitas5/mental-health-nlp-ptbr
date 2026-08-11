@@ -158,6 +158,49 @@ def read_user_histories(
     return combined.sort(["user_id", "created_at"])
 
 
+def read_user_history(directory: Path, user_id: str) -> pl.DataFrame:
+    """Lê o histórico bruto de um único usuário, sem concatenar os demais.
+
+    Contraparte de :func:`read_user_histories` restrita a um usuário: aplica
+    o mesmo dedupe por ``tweet_id`` e a mesma ordenação por ``created_at``,
+    mas lendo só o arquivo do usuário pedido — usada pelo pré-processamento,
+    que processa um usuário por vez e não precisa (nem deve) materializar o
+    histórico inteiro para extrair a fatia de um só.
+
+    Parameters
+    ----------
+    directory : Path
+        Diretório com um ``.parquet`` por usuário (histórico bruto da coleta).
+    user_id : str
+        Identificador pseudonimizado do usuário.
+
+    Returns
+    -------
+    pl.DataFrame
+        Histórico do usuário, deduplicado por ``tweet_id`` e ordenado por
+        ``created_at``; DataFrame vazio se o arquivo não existir.
+
+    Examples
+    --------
+    >>> read_user_history(Path("data/raw/user_histories"), "u_a")  # doctest: +SKIP
+    """
+    path = Path(directory) / f"{user_id}.parquet"
+    if not path.is_file():
+        return pl.DataFrame()
+
+    frame = pl.read_parquet(path)
+    before = frame.height
+    frame = frame.unique(subset=["tweet_id"], keep="first", maintain_order=True)
+    removed = before - frame.height
+    if removed:
+        logger.warning(
+            "Removidos %d tweets duplicados no histórico do usuário (mesmo tweet_id).",
+            removed,
+        )
+
+    return frame.sort("created_at") if "created_at" in frame.columns else frame
+
+
 def read_partitioned(directory: Path, *, stage: str | None = None) -> pl.DataFrame:
     """Lê e concatena os arquivos de um artefato particionado em diretório.
 
@@ -208,6 +251,69 @@ def read_partitioned(directory: Path, *, stage: str | None = None) -> pl.DataFra
         directory,
     )
     return combined
+
+
+def read_user_partition(directory: Path, user_id: str) -> pl.DataFrame:
+    """Lê o arquivo de um único usuário num artefato particionado, sem tocar os demais.
+
+    É a contraparte de leitura de :func:`data.writer.write_user_partition`: em
+    vez de carregar o diretório inteiro em memória e depois filtrar por
+    usuário, cada etapa que processa um usuário por vez lê diretamente o
+    arquivo dele — o que mantém o uso de memória e de I/O proporcional a um
+    usuário, não à população inteira.
+
+    Parameters
+    ----------
+    directory : Path
+        Diretório particionado por usuário (um arquivo por ``user_id``).
+    user_id : str
+        Identificador pseudonimizado do usuário.
+
+    Returns
+    -------
+    pl.DataFrame
+        Conteúdo do usuário, ou um DataFrame vazio se o arquivo não existir
+        (usuário sem dados nesta etapa).
+
+    Examples
+    --------
+    >>> read_user_partition(Path("data/interim/tweets_clean"), "u_a")  # doctest: +SKIP
+    """
+    path = Path(directory) / f"{user_id}.parquet"
+    if not path.is_file():
+        return pl.DataFrame()
+
+    frame = pl.read_parquet(path)
+    logger.debug("Lido %s (%d linhas, %d colunas).", path.name, frame.height, frame.width)
+    return frame
+
+
+def count_partitioned_rows(directory: Path) -> int:
+    """Conta as linhas de um artefato particionado sem concatenar os arquivos em memória.
+
+    Usada para compor resumos de execução (ex.: total de tweets processados)
+    a partir de um diretório particionado por usuário, sem pagar o custo de
+    materializar a população inteira só para contar linhas.
+
+    Parameters
+    ----------
+    directory : Path
+        Diretório particionado por usuário.
+
+    Returns
+    -------
+    int
+        Soma de linhas de todos os arquivos ``.parquet`` do diretório
+        (``0`` se o diretório estiver vazio ou não existir).
+
+    Examples
+    --------
+    >>> count_partitioned_rows(Path("data/interim/tweets_clean"))  # doctest: +SKIP
+    """
+    files = list_files(Path(directory), "*.parquet")
+    if not files:
+        return 0
+    return sum(int(pl.scan_parquet(file).select(pl.len()).collect().item()) for file in files)
 
 
 def count_users(directory: Path) -> int:

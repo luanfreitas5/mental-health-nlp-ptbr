@@ -12,11 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import polars as pl
 
 from config.logging import get_logger
-from constants.columns import TEXT_NORMALIZED, USER_ID
-from data.reader import read_partitioned, select_pending_users
+from constants.columns import TEXT_NORMALIZED
+from data.reader import list_collected_users, read_user_partition, select_pending_users
 from exceptions.model import MissingDependencyError, ModelError
 from features.semantic import EmbeddingEncoder, save_embeddings
 from pipelines.base import PipelineStage, StageContext
@@ -68,8 +67,8 @@ class EmbeddingStage(PipelineStage):
             logger.info("Geração de embeddings desativada em configs/features.yaml.")
             return {"skipped": True, "reason": "desativada na configuração"}
 
-        tweets = self._load_tweets(paths)
-        all_users = set(tweets[USER_ID].unique().to_list())
+        source_dir = self._resolve_source_dir(paths)
+        all_users = list_collected_users(source_dir)
         requested = self._resolve_requested_models(config, context)
         limit = context.option("limit_users")
 
@@ -79,7 +78,7 @@ class EmbeddingStage(PipelineStage):
 
         for name, model_name in requested.items():
             result = self._process_encoder(
-                name, model_name, tweets, all_users, limit, paths.data.embeddings, config
+                name, model_name, source_dir, all_users, limit, paths.data.embeddings, config
             )
             if result is None:
                 continue
@@ -102,11 +101,10 @@ class EmbeddingStage(PipelineStage):
             "written": written,
         }
 
-    def _load_tweets(self, paths: Any) -> pl.DataFrame:
-        """Carrega os tweets rotulados, se já existirem; senão, os tweets limpos."""
+    def _resolve_source_dir(self, paths: Any) -> Path:
+        """Aponta para os tweets rotulados, se já existirem; senão, os tweets limpos."""
         labeled_available = bool(list_files(paths.data.tweets_labeled, "*.parquet"))
-        source = paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
-        return read_partitioned(source, stage="label" if labeled_available else "preprocess")
+        return paths.data.tweets_labeled if labeled_available else paths.data.tweets_clean
 
     def _resolve_requested_models(self, config: Any, context: StageContext) -> dict[str, str]:
         """Monta o mapa de encoders a rodar: o principal sempre, os demais se solicitados.
@@ -123,7 +121,7 @@ class EmbeddingStage(PipelineStage):
         self,
         name: str,
         model_name: str,
-        tweets: pl.DataFrame,
+        source_dir: Path,
         all_users: set[str],
         limit: int | None,
         embeddings_dir: Path,
@@ -142,7 +140,7 @@ class EmbeddingStage(PipelineStage):
         )
 
         encoded_ok = self._encode_pending_users(
-            name, model_name, config, tweets, pending, cache_dir
+            name, model_name, config, source_dir, pending, cache_dir
         )
         if pending and not encoded_ok:
             return None
@@ -183,7 +181,7 @@ class EmbeddingStage(PipelineStage):
         name: str,
         model_name: str,
         config: Any,
-        tweets: pl.DataFrame,
+        source_dir: Path,
         pending: list[str],
         cache_dir: Path,
     ) -> bool:
@@ -202,11 +200,8 @@ class EmbeddingStage(PipelineStage):
             logger.warning("Encoder '%s' pulado: %s", name, error)
             return False
 
-        groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-            USER_ID, as_dict=True, maintain_order=True
-        )
         for user_id in track(pending, f"Codificando usuários ({name})"):
-            if not self._encode_and_cache_user(user_id, groups, encoder, name, cache_dir):
+            if not self._encode_and_cache_user(user_id, source_dir, encoder, name, cache_dir):
                 break
 
         return True
@@ -214,14 +209,14 @@ class EmbeddingStage(PipelineStage):
     def _encode_and_cache_user(
         self,
         user_id: str,
-        groups: dict[Any, pl.DataFrame],
+        source_dir: Path,
         encoder: EmbeddingEncoder,
         name: str,
         cache_dir: Path,
     ) -> bool:
         """Codifica um usuário e grava no cache; ``False`` interrompe o restante do lote."""
-        user_frame = groups.get((user_id,))
-        if user_frame is None or user_frame.is_empty():
+        user_frame = read_user_partition(source_dir, user_id)
+        if user_frame.is_empty():
             return True
 
         try:

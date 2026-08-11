@@ -11,7 +11,13 @@ import polars as pl
 from config.logging import get_logger
 from constants.columns import USER_ID
 from data.catalog import write_dataset_manifest
-from data.reader import list_collected_users, read_parquet, read_partitioned, select_pending_users
+from data.reader import (
+    list_collected_users,
+    read_parquet,
+    read_partitioned,
+    read_user_partition,
+    select_pending_users,
+)
 from data.writer import write_parquet, write_user_partition
 from exceptions.data import InsufficientDataError
 from features.builder import build_user_features_raw, finalize_user_features
@@ -86,16 +92,12 @@ class FeaturesStage(PipelineStage):
         config = context.config
         paths = context.paths
 
-        tweets = read_partitioned(paths.data.tweets_labeled, stage="label")
         labels = read_parquet(paths.data.user_labels)
-        metadata, scores = self._load_optional_inputs(paths)
+        metadata, scores_dir = self._load_optional_inputs(paths)
 
+        available = list_collected_users(paths.data.tweets_labeled)
         already_processed = list_collected_users(paths.data.user_features_raw)
-        pending = select_pending_users(
-            set(tweets[USER_ID].unique().to_list()),
-            already_processed,
-            context.option("limit_users"),
-        )
+        pending = select_pending_users(available, already_processed, context.option("limit_users"))
         logger.info(
             "Matriz de atributos: %d usuários já processados, %d pendentes nesta execução.",
             len(already_processed),
@@ -103,7 +105,9 @@ class FeaturesStage(PipelineStage):
         )
 
         if pending:
-            self._build_pending_user_features(tweets, metadata, scores, pending, config, paths)
+            self._build_pending_user_features(
+                paths.data.tweets_labeled, metadata, scores_dir, pending, config, paths
+            )
 
         processed_users = list_collected_users(paths.data.user_features_raw)
         if not processed_users:
@@ -128,71 +132,74 @@ class FeaturesStage(PipelineStage):
             "written": str(target),
         }
 
-    def _load_optional_inputs(self, paths: Any) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
-        """Carrega metadata e vetores psicológicos opcionais, avisando se os scores faltarem."""
+    def _load_optional_inputs(self, paths: Any) -> tuple[pl.DataFrame | None, Path | None]:
+        """Carrega a metadata e localiza os vetores psicológicos opcionais, avisando se faltarem.
+
+        A metadata é um artefato único e pequeno (uma linha por usuário) e por
+        isso é lida por inteiro; os vetores psicológicos, por serem
+        particionados por usuário, ficam como um diretório — cada usuário lê
+        só o próprio arquivo dentro de :meth:`_build_and_write_user_row`.
+        """
         metadata = (
             read_parquet(paths.data.user_metadata) if paths.data.user_metadata.is_file() else None
         )
-        scores = (
-            read_partitioned(paths.data.psychological_scores)
+        scores_dir = (
+            paths.data.psychological_scores
             if list_files(paths.data.psychological_scores, "*.parquet")
             else None
         )
-        if scores is None:
+        if scores_dir is None:
             logger.warning(
                 "Vetores psicológicos ausentes: o grupo 'psychological' será omitido. "
                 "Execute a etapa 'psych' para incluí-lo."
             )
-        return metadata, scores
+        return metadata, scores_dir
 
     def _build_pending_user_features(
         self,
-        tweets: pl.DataFrame,
+        tweets_dir: Path,
         metadata: pl.DataFrame | None,
-        scores: pl.DataFrame | None,
+        scores_dir: Path | None,
         pending: list[str],
         config: Any,
         paths: Any,
     ) -> None:
         """Constrói e grava, usuário a usuário, a linha de atributos brutos dos pendentes."""
-        tweet_groups = tweets.filter(pl.col(USER_ID).is_in(pending)).partition_by(
-            USER_ID, as_dict=True, maintain_order=True
-        )
         metadata_groups = (
             metadata.partition_by(USER_ID, as_dict=True, maintain_order=True)
             if metadata is not None
             else {}
         )
-        scores_groups = (
-            scores.partition_by(USER_ID, as_dict=True, maintain_order=True)
-            if scores is not None
-            else {}
-        )
 
         for user_id in track(pending, "Construindo atributos por usuário"):
             self._build_and_write_user_row(
-                user_id, tweet_groups, metadata_groups, scores_groups, config, paths
+                user_id, tweets_dir, metadata_groups, scores_dir, config, paths
             )
 
     def _build_and_write_user_row(
         self,
         user_id: str,
-        tweet_groups: dict[Any, pl.DataFrame],
+        tweets_dir: Path,
         metadata_groups: dict[Any, pl.DataFrame],
-        scores_groups: dict[Any, pl.DataFrame],
+        scores_dir: Path | None,
         config: Any,
         paths: Any,
     ) -> None:
         """Monta e grava a linha de atributos brutos de um único usuário, se houver tweets."""
-        user_tweets = tweet_groups.get((user_id,))
-        if user_tweets is None or user_tweets.is_empty():
+        user_tweets = read_user_partition(tweets_dir, user_id)
+        if user_tweets.is_empty():
             return
+
+        user_scores = None
+        if scores_dir is not None:
+            candidate = read_user_partition(scores_dir, user_id)
+            user_scores = candidate if not candidate.is_empty() else None
 
         raw_row = build_user_features_raw(
             user_tweets,
             config.features,
             metadata=metadata_groups.get((user_id,)),
-            psychological_scores=scores_groups.get((user_id,)),
+            psychological_scores=user_scores,
         )
         write_user_partition(raw_row, paths.data.user_features_raw, user_id)
 
