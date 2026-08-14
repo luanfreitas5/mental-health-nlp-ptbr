@@ -48,7 +48,7 @@ dependencies = [
     "pandera[polars]>=0.32.1",
     # Configuração e validação em runtime
     "pydantic>=2.7",
-    "pydantic-settings>=2.3",
+    "pydantic-settings>=2.15.0",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "tomli>=2.0; python_version < '3.11'",  # tomllib só existe a partir do 3.11
