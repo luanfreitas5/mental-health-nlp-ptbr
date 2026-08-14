@@ -189,7 +189,7 @@ dev = [
     "nbqa>=1.8",                    # Um utilitário para aplicar linters a notebooks do Jupyter
     "nbstripout>=0.7",              # Um utilitário para remover saídas e metadados de notebooks do Jupyter
     # Workflow
-    "pre-commit>=3.7",              # Um framework para gerenciar hooks de commit no Git
+    "pre-commit>=4.6.2",              # Um framework para gerenciar hooks de commit no Git
     "commitizen>=4.16.5",             # Um utilitário para manter o histórico de commits consistente
     # Documentação
     "mkdocs-material>=9.7.7",         # Um tema para MkDocs
