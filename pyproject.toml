@@ -197,7 +197,7 @@ dev = [
     # Profiling (use sob demanda)
     "scalene>=1.5",                 # Um profiler de performance para Python
     # Ferramentas para rodar Data Wrangler no Vscode
-    "pip>=26.1.2",                  # Um gerenciador de pacotes para Python
+    "pip>=26.2.1",                  # Um gerenciador de pacotes para Python
     "ipykernel>=7.3.0",             # Um kernel para Jupyter que executa código Python
     "ipywidgets>=8.1.8"             # Um conjunto de widgets interativos para Jupyter
 ]
