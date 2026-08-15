@@ -141,6 +141,7 @@ def validate_feature_matrix(
     1
     """
     _validate_user_id_present(frame)
+    _validate_user_id_unique(frame)
     _validate_expected_groups_present(frame, expected_groups)
 
     feature_columns = list_feature_columns(frame)
@@ -158,6 +159,22 @@ def _validate_user_id_present(frame: pl.DataFrame) -> None:
         raise SchemaValidationError(
             f"Matriz de atributos sem a coluna '{USER_ID}': impossível associar "
             "features aos rótulos."
+        )
+
+
+def _validate_user_id_unique(frame: pl.DataFrame) -> None:
+    """Garante uma única linha por usuário — a unidade amostral do projeto.
+
+    ``user_id`` duplicado nesta matriz faria com que o mesmo usuário pudesse
+    cair em treino e em teste em :func:`data.splitter.create_splits`, que
+    particiona ao nível da linha, não do usuário.
+    """
+    duplicated = frame.filter(pl.col(USER_ID).is_duplicated())
+    if not duplicated.is_empty():
+        n_users = duplicated[USER_ID].n_unique()
+        raise SchemaValidationError(
+            f"{n_users} usuário(s) com linhas duplicadas em 'user_id' na matriz de atributos. "
+            "Isso violaria o particionamento por usuário na etapa 'split'."
         )
 
 

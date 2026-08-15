@@ -326,6 +326,29 @@ def build_user_features_raw(
     return _filter_min_tweets(result, config.aggregation.min_tweets_per_user).sort(USER_ID)
 
 
+def _drop_duplicate_users(raw: pl.DataFrame) -> pl.DataFrame:
+    """Remove linhas duplicadas de ``user_id``, mantendo a primeira ocorrência.
+
+    ``user_features_raw`` é acumulado de arquivos particionados por usuário
+    (ver :func:`data.reader.read_partitioned`); se o mesmo pseudônimo aparecer
+    em mais de um arquivo — por exemplo, uma reprocessamento parcial ou uma
+    coleta duplicada do mesmo usuário —, a concatenação traria a linha
+    repetida. Sem esta deduplicação, o usuário poderia ser sorteado tanto para
+    treino quanto para teste em :func:`data.splitter.create_splits`, violando
+    a garantia central do projeto de que a partição é por usuário.
+    """
+    duplicated = raw.filter(pl.col(USER_ID).is_duplicated())
+    if duplicated.is_empty():
+        return raw
+
+    n_users = duplicated[USER_ID].n_unique()
+    logger.warning(
+        "Removidas linhas duplicadas de %d usuário(s) em user_features_raw (mesmo user_id).",
+        n_users,
+    )
+    return raw.unique(subset=[USER_ID], keep="first", maintain_order=True)
+
+
 def finalize_user_features(
     raw: pl.DataFrame,
     config: FeaturesConfig,
@@ -370,6 +393,7 @@ def finalize_user_features(
             "(features.aggregation.min_tweets_per_user)."
         )
 
+    raw = _drop_duplicate_users(raw)
     result = handle_missing_values(raw, config)
 
     if labels is not None:
