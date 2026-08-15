@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from config.logging import get_logger
-from constants.columns import TEXT_NORMALIZED
+from constants.columns import TEXT_NORMALIZED, USER_ID
 from data.reader import list_collected_users, read_user_partition, select_pending_users
 from exceptions.model import MissingDependencyError, ModelError
 from features.semantic import EmbeddingEncoder, save_embeddings
@@ -145,17 +145,17 @@ class EmbeddingStage(PipelineStage):
         if pending and not encoded_ok:
             return None
 
-        return self._consolidate_cache(cache_dir, embeddings_dir, name)
+        return self._consolidate_cache(cache_dir, embeddings_dir, name, source_dir)
 
     def _consolidate_cache(
-        self, cache_dir: Path, embeddings_dir: Path, name: str
+        self, cache_dir: Path, embeddings_dir: Path, name: str, source_dir: Path
     ) -> tuple[str, int, int] | None:
         """Reúne o cache por usuário de um encoder num único artefato consolidado."""
         cached_users = self._list_cached_users(cache_dir)
         if not cached_users:
             return None
 
-        embeddings, owners = self._load_cached_embeddings(cache_dir, cached_users)
+        embeddings, owners = self._load_cached_embeddings(cache_dir, cached_users, source_dir)
         path = save_embeddings(embeddings, owners, embeddings_dir, name)
         return str(path), int(embeddings.shape[1]), int(embeddings.shape[0])
 
@@ -163,15 +163,49 @@ class EmbeddingStage(PipelineStage):
         """Lista os usuários já codificados e presentes no cache em disco."""
         return sorted(file.stem for file in cache_dir.glob("*.npy"))
 
+    def _resolve_owner_id(self, cache_dir: Path, partition_key: str, source_dir: Path) -> str:
+        """Resolve o ``user_id`` pseudonimizado real de um usuário cacheado.
+
+        O cache é gravado com o nome do arquivo de origem (``partition_key``,
+        o handle bruto da coleta) para permitir a retomada — mas o
+        identificador que o resto do pipeline usa (``user_features``,
+        ``splits``) é o pseudônimo dentro da coluna ``user_id`` dos tweets.
+        Sem essa distinção, o índice de embeddings fica órfão: nenhum modelo
+        downstream encontra as sequências pelo pseudônimo. O resultado é
+        cacheado num arquivo ``.owner`` ao lado do ``.npy`` para não reler o
+        parquet de origem a cada consolidação.
+        """
+        owner_path = cache_dir / f"{partition_key}.owner"
+        if owner_path.is_file():
+            return owner_path.read_text(encoding="utf-8").strip()
+
+        user_frame = read_user_partition(source_dir, partition_key)
+        if user_frame.is_empty() or USER_ID not in user_frame.columns:
+            logger.warning(
+                "Não foi possível resolver o user_id pseudonimizado de '%s': usando o nome "
+                "do arquivo de origem, o que pode deixar as sequências inacessíveis aos "
+                "modelos recorrentes.",
+                partition_key,
+            )
+            return partition_key
+
+        owner_id = str(user_frame[USER_ID][0])
+        owner_path.write_text(owner_id, encoding="utf-8")
+        return owner_id
+
     def _load_cached_embeddings(
-        self, cache_dir: Path, cached_users: list[str]
+        self, cache_dir: Path, cached_users: list[str], source_dir: Path
     ) -> tuple[np.ndarray, list[str]]:
         """Carrega os vetores cacheados e monta a lista de usuário-dono de cada linha."""
         arrays = [np.load(cache_dir / f"{user_id}.npy") for user_id in cached_users]
         embeddings = np.vstack(arrays)
         owners = [
-            user_id
-            for user_id, array in zip(cached_users, arrays, strict=True)
+            self._resolve_owner_id(cache_dir, partition_key, source_dir)
+            for partition_key in cached_users
+        ]
+        owners = [
+            owner_id
+            for owner_id, array in zip(owners, arrays, strict=True)
             for _ in range(array.shape[0])
         ]
         return embeddings, owners
@@ -226,4 +260,7 @@ class EmbeddingStage(PipelineStage):
             return False
 
         np.save(cache_dir / f"{user_id}.npy", user_embeddings)
+        if USER_ID in user_frame.columns:
+            owner_id = str(user_frame[USER_ID][0])
+            (cache_dir / f"{user_id}.owner").write_text(owner_id, encoding="utf-8")
         return True
