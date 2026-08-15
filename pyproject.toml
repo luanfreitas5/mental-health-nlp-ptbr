@@ -119,7 +119,7 @@ torchaudio = { index = "pytorch-cu124" }
 # semânticos, fine-tuning do BERTimbau e cliente do Ollama (etapas 3, 4, 5 e 8).
 llm = [
     "torch>=2.2",
-    "transformers>=4.44",
+    "transformers>=5.15.0",
     "accelerate>=0.33",
     "datasets>=2.20",
     "ollama>=0.3",
