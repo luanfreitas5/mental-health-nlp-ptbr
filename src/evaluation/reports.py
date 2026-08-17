@@ -315,6 +315,28 @@ def _build_pairwise_subsection(statistics: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _build_mcnemar_subsection(statistics: dict[str, Any]) -> list[str]:
+    """Monta a subseção de comparações par a par (McNemar), se disponível."""
+    if "mcnemar" not in statistics:
+        return []
+
+    lines = [
+        "### Comparações par a par (McNemar)",
+        "",
+        "| Comparação | p-valor | Significativo | Interpretação |",
+        "| --- | --- | --- | --- |",
+    ]
+    for pair, entry in statistics["mcnemar"].items():
+        lines.append(
+            f"| {pair.replace('_vs_', ' vs. ')} | "
+            f"{_format_number(entry['p_value'])} | "
+            f"{'sim' if entry['significant'] else 'não'} | "
+            f"{entry.get('interpretation', '')} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _build_statistics_section(statistics: dict[str, Any] | None) -> list[str]:
     """Monta a seção 3 (testes estatísticos), se houver resultados a reportar."""
     if not statistics:
@@ -323,6 +345,7 @@ def _build_statistics_section(statistics: dict[str, Any] | None) -> list[str]:
     lines = ["## 3. Testes estatísticos", ""]
     lines.extend(_build_friedman_subsection(statistics))
     lines.extend(_build_pairwise_subsection(statistics))
+    lines.extend(_build_mcnemar_subsection(statistics))
     return lines
 
 
