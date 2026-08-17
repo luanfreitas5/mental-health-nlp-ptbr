@@ -13,6 +13,7 @@ entre publicações, e a ordem entre elas, desapareceria.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
@@ -144,6 +145,15 @@ def _build_recurrent_classifier_class(torch: Any) -> type:
     RecurrentClassifier.__qualname__ = RecurrentClassifier.__name__
     globals()[RecurrentClassifier.__name__] = RecurrentClassifier
     return RecurrentClassifier
+
+
+# Publica a classe em `globals()` já na importação do módulo — não apenas
+# no primeiro `fit`/`predict_proba`. Sem isso, um processo que só faz
+# `load_model` (como a etapa `evaluate` em execução isolada) desserializa
+# antes de qualquer chamada que construiria a classe, e o `pickle` falha
+# com "Can't get attribute 'RecurrentClassifier'".
+with contextlib.suppress(MissingDependencyError):
+    _build_recurrent_classifier_class(_import_torch())
 
 
 class _RecurrentNetwork:
