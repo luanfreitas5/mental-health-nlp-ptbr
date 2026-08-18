@@ -273,7 +273,7 @@ class TestNgrams:
     def test_vetorizador_ajusta_e_transforma(self) -> None:
         """O TF-IDF é ajustado apenas nos documentos vistos no fit."""
         vectorizer = UserNgramVectorizer(NgramsSection(min_df=1))
-        matrix = vectorizer.fit_transform(["eu não estou bem", "dia bom hoje"])
+        matrix = vectorizer.fit_transform(["eu não estou bem", "dia bom hoje"])  # pyright: ignore[reportArgumentType]
 
         assert matrix.shape[0] == 2
         assert matrix.shape[1] > 0

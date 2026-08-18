@@ -71,7 +71,7 @@ class TestFabricaDeEstimadores:
     def test_cria_regressao_logistica(self) -> None:
         """A regressão logística é construída com seus hiperparâmetros."""
         estimator = cast(LogisticRegression, build_estimator("logistic_regression", {"C": 0.5}, 3))
-        assert estimator.C == 0.5
+        assert estimator.C == 0.5  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_estimador_desconhecido_e_rejeitado(self) -> None:
         """Um nome não registrado falha listando os disponíveis."""

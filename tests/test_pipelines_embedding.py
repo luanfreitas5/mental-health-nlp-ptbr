@@ -92,7 +92,11 @@ def test_encode_and_cache_user_writes_owner_sidecar(tmp_path: Path, partition_di
             return np.zeros((len(texts), 4), dtype=np.float32)
 
     ok = stage._encode_and_cache_user(
-        "000c7X_fulljson", partition_dir, _FakeEncoder(), "modelo", cache_dir
+        "000c7X_fulljson",
+        partition_dir,
+        _FakeEncoder(),
+        "modelo",
+        cache_dir,  # pyright: ignore[reportArgumentType]
     )
 
     assert ok is True
