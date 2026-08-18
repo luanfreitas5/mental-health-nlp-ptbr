@@ -16,10 +16,17 @@ groups:
 
 # --- 1. Linguísticos --------------------------------------------------------
 linguistic:
+  # `death`, `loneliness` e `hopelessness` FORAM comentados daqui de propósito:
+  # são exatamente os léxicos usados como limiar em
+  # labeling/weak_supervision.py::label_from_lexical_evidence para ATRIBUIR o
+  # rótulo do usuário. Mantê-los como atributo do classificador vazaria o
+  # rótulo para o modelo (a "predição" reconstruiria a própria regra de
+  # rotulação, não um padrão independente). Ver investigação documentada em
+  # docs/ (vazamento de rótulo via features linguísticas/emocionais).
   lexicon_ratios:                # proporção de tweets do usuário com ≥1 termo
-    - death
-    - loneliness
-    - hopelessness
+    # - death
+    # - loneliness
+    # - hopelessness
     - isolation
     - negative_emotion
     - insomnia

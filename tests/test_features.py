@@ -21,7 +21,13 @@ from constants.columns import (
     TEMPORAL_PREFIX,
 )
 from features.behavioral import compute_engagement, compute_interaction_ratios
-from features.builder import build_profile_columns, handle_missing_values, select_groups
+from features.builder import (
+    LABEL_LEAKING_COLUMNS,
+    _drop_label_leaking_columns,
+    build_profile_columns,
+    handle_missing_values,
+    select_groups,
+)
 from features.emotional import build_aggregations, compute_sentiment_distribution
 from features.linguistic import (
     compute_lexical_diversity,
@@ -326,3 +332,26 @@ class TestConstrucaoDaMatriz:
         """Um grupo inexistente é erro de configuração, não seleção vazia."""
         with pytest.raises(KeyError, match="desconhecidos"):
             list_feature_columns(feature_matrix, ["grupo_inexistente"])
+
+    def test_atributos_que_vazam_o_rotulo_sao_removidos(self) -> None:
+        """`emo_negativo_ratio` é o mesmo limiar usado para rotular o usuário: não pode virar
+        atributo."""
+        frame = pl.DataFrame(
+            {
+                "user_id": ["u_a"],
+                f"{EMOTIONAL_PREFIX}negativo_ratio": [0.4],
+                f"{EMOTIONAL_PREFIX}negative_positive_ratio": [3.0],
+                f"{EMOTIONAL_PREFIX}positivo_ratio": [0.1],
+            }
+        )
+        result = _drop_label_leaking_columns(frame)
+
+        assert not any(column in result.columns for column in LABEL_LEAKING_COLUMNS)
+        assert f"{EMOTIONAL_PREFIX}positivo_ratio" in result.columns
+
+    def test_ausencia_dos_atributos_vazantes_nao_derruba(self) -> None:
+        """Sem as colunas de vazamento presentes, a remoção é inofensiva."""
+        frame = pl.DataFrame({"user_id": ["u_a"], f"{EMOTIONAL_PREFIX}positivo_ratio": [0.1]})
+        result = _drop_label_leaking_columns(frame)
+
+        assert result.columns == frame.columns

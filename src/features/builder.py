@@ -12,6 +12,8 @@ fora sinal.
 
 from __future__ import annotations
 
+from typing import Final
+
 import polars as pl
 
 from config.logging import get_logger
@@ -19,6 +21,7 @@ from config.settings import FeaturesConfig
 from constants.columns import (
     ACTIVE_DAYS,
     CREATED_AT,
+    EMOTIONAL_PREFIX,
     FIRST_TWEET_AT,
     LAST_TWEET_AT,
     MISSING_INDICATOR_SUFFIX,
@@ -41,6 +44,45 @@ from utils.timing import log_duration
 from utils.validation import require_columns
 
 logger = get_logger(__name__)
+
+#: Atributos idênticos (ou função direta) dos valores usados como limiar em
+#: ``labeling.weak_supervision.label_from_lexical_evidence`` para ATRIBUIR o
+#: rótulo do usuário (``negative_ratio`` — limiar ``min_negative_ratio`` da
+#: classe depressão). Os léxicos ``death``/``loneliness``/``hopelessness`` já
+#: são excluídos na origem, em ``configs/features.yaml``; estes dois são
+#: calculados a partir do classificador de sentimento e não têm um toggle
+#: próprio, por isso são removidos aqui, na montagem final da matriz. Mantê-
+#: los como atributo do classificador vazaria o rótulo para o modelo — a
+#: "predição" reconstruiria a própria regra de rotulação, não um padrão
+#: independente.
+LABEL_LEAKING_COLUMNS: Final[tuple[str, ...]] = (
+    f"{EMOTIONAL_PREFIX}negativo_ratio",
+    f"{EMOTIONAL_PREFIX}negative_positive_ratio",  # função direta de negativo_ratio
+)
+
+
+def _drop_label_leaking_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Remove da matriz os atributos que vazam a regra de rotulação do usuário.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        Matriz de atributos com todos os grupos já unidos.
+
+    Returns
+    -------
+    pl.DataFrame
+        Matriz sem as colunas listadas em :data:`LABEL_LEAKING_COLUMNS`.
+
+    Examples
+    --------
+    >>> _drop_label_leaking_columns(pl.DataFrame({"emo_negativo_ratio": [0.1]})).columns
+    []
+    """
+    present = [column for column in LABEL_LEAKING_COLUMNS if column in frame.columns]
+    if present:
+        logger.warning("Atributos removidos por vazamento de rótulo: %s.", present)
+    return frame.drop(present)
 
 
 def build_profile_columns(tweets: pl.DataFrame) -> pl.DataFrame:
@@ -321,6 +363,7 @@ def build_user_features_raw(
         result = _join_semantic_group(result, tweets, enabled, config)
         result = _join_psychological_group(result, enabled, config, psychological_scores)
 
+    result = _drop_label_leaking_columns(result)
     result = _promote_night_activity_column(result)
 
     return _filter_min_tweets(result, config.aggregation.min_tweets_per_user).sort(USER_ID)
