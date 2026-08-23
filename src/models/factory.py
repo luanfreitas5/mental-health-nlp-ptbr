@@ -52,7 +52,9 @@ def _build_sequence_model(
 ) -> BaseUserClassifier:
     """Constrói um modelo sequencial (BiLSTM, LSTM, CNN de texto)."""
     del config
-    return SequenceClassifier(name=name, params=dict(spec.params), classes=classes)
+    return SequenceClassifier(
+        name=name, params=dict(spec.params), classes=classes, estimator_name=spec.estimator
+    )
 
 
 def _build_transformer_model(

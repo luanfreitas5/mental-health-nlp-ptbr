@@ -13,6 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from constants.labels import CLASS_ORDER
 from exceptions.model import ModelNotFittedError, ModelPersistenceError, UnknownModelError
 from models.base import UserDataset
+from models.deep import SequenceClassifier, build_sequence_network
 from models.factory import create_model, create_models
 from models.hybrid import HybridClassifier, split_feature_blocks
 from models.persistence import load_metadata, load_model, save_model
@@ -207,6 +208,93 @@ class TestClassificadorTabular:
         assert description["params"]["max_depth"] == 6
 
 
+class TestClassificadorSequencial:
+    """Testes das redes sequenciais (BiLSTM/LSTM e CNN) sobre embeddings de tweets."""
+
+    @pytest.fixture(autouse=True)
+    def _requires_torch(self) -> None:
+        """Pula a classe inteira se o PyTorch (dependência opcional) não estiver instalado."""
+        pytest.importorskip("torch")
+
+    @staticmethod
+    def _sequence_dataset(rng: np.random.Generator) -> UserDataset:
+        """Monta um conjunto sintético com sequências de embeddings por usuário."""
+        n_per_class = 6
+        user_ids = [
+            f"u{class_index}_{i}"
+            for class_index in range(len(CLASS_ORDER))
+            for i in range(n_per_class)
+        ]
+        labels = np.array(
+            [class_index for class_index in range(len(CLASS_ORDER)) for _ in range(n_per_class)]
+        )
+        sequences = {
+            user_id: rng.normal(size=(int(rng.integers(3, 7)), 6)).astype(np.float32)
+            for user_id in user_ids
+        }
+        return UserDataset(
+            user_ids=user_ids,
+            features=np.zeros((len(user_ids), 1)),
+            feature_names=["f0"],
+            labels=labels,
+            sequences=sequences,
+        )
+
+    def test_treina_e_preve_cnn(self) -> None:
+        """O TextCNN treina e produz uma distribuição de probabilidade válida por usuário."""
+        dataset = self._sequence_dataset(np.random.default_rng(42))
+        model = SequenceClassifier(
+            name="cnn_text",
+            params={
+                "num_filters": 4,
+                "kernel_sizes": [2, 3],
+                "dropout": 0.1,
+                "learning_rate": 0.01,
+                "batch_size": 8,
+                "epochs": 2,
+                "patience": 1,
+                "max_tweets_per_user": 10,
+                "random_state": 42,
+            },
+            estimator_name="cnn_text",
+        )
+        model.fit(dataset)
+        proba = model.predict_proba(dataset)
+
+        assert proba.shape == (len(dataset), len(CLASS_ORDER))
+        assert np.allclose(proba.sum(axis=1), 1.0)
+        assert model.is_fitted
+
+    def test_treina_e_preve_bilstm(self) -> None:
+        """A BiLSTM continua funcionando após a introdução do despacho por estimador."""
+        dataset = self._sequence_dataset(np.random.default_rng(42))
+        model = SequenceClassifier(
+            name="bilstm",
+            params={
+                "hidden_dim": 4,
+                "num_layers": 1,
+                "bidirectional": True,
+                "dropout": 0.1,
+                "learning_rate": 0.01,
+                "batch_size": 8,
+                "epochs": 2,
+                "patience": 1,
+                "max_tweets_per_user": 10,
+                "random_state": 42,
+            },
+        )
+        model.fit(dataset)
+        proba = model.predict_proba(dataset)
+
+        assert proba.shape == (len(dataset), len(CLASS_ORDER))
+        assert np.allclose(proba.sum(axis=1), 1.0)
+
+    def test_estimador_sequencial_desconhecido_e_rejeitado(self) -> None:
+        """Um nome não registrado falha listando os disponíveis."""
+        with pytest.raises(UnknownModelError, match="desconhecido"):
+            build_sequence_network("modelo_inexistente", input_dim=6, n_classes=3, params={})
+
+
 class TestModeloHibrido:
     """Testes do modelo híbrido — a contribuição metodológica central."""
 
@@ -302,6 +390,18 @@ class TestFabricaDeModelos:
     def test_exploratorios_ficam_de_fora_por_padrao(self, config) -> None:
         """Sem a flag, a extensão exploratória não é instanciada."""
         assert len(create_models(config)) < len(create_models(config, include_exploratory=True))
+
+    def test_modelos_sequenciais_recebem_o_estimador_correto(self, config) -> None:
+        """bilstm, lstm e cnn_text não podem colapsar todos na mesma arquitetura.
+
+        Reproduz a regressão em que ``_build_sequence_model`` descartava
+        ``spec.estimator`` e todo modelo sequencial — inclusive o registrado
+        como ``cnn_text`` no YAML — virava silenciosamente uma BiLSTM.
+        """
+        models = create_models(config, include_exploratory=True)
+        assert models["bilstm"].estimator_name == "bilstm"  # pyright: ignore[reportAttributeAccessIssue]
+        assert models["lstm"].estimator_name == "bilstm"  # pyright: ignore[reportAttributeAccessIssue]
+        assert models["cnn_text"].estimator_name == "cnn_text"  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_estimador_desconhecido_e_rejeitado(self, config) -> None:
         """Um estimador fora do registro falha na criação."""

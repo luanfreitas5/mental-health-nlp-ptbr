@@ -22,7 +22,7 @@ import numpy as np
 
 from config.environment import resolve_device
 from config.logging import get_logger
-from exceptions.model import MissingDependencyError, TrainingError
+from exceptions.model import MissingDependencyError, TrainingError, UnknownModelError
 from models.base import BaseUserClassifier, UserDataset
 from utils.progress import build_progress
 
@@ -147,13 +147,84 @@ def _build_recurrent_classifier_class(torch: Any) -> type:
     return RecurrentClassifier
 
 
-# Publica a classe em `globals()` já na importação do módulo — não apenas
+@cache
+def _build_convolutional_classifier_class(torch: Any) -> type:
+    """Cria a classe do módulo convolucional uma única vez, em escopo de módulo.
+
+    Mesmo motivo de :func:`_build_recurrent_classifier_class`: a classe
+    precisa viver em ``globals()`` sob um nome simples para que o ``pickle``
+    consiga resolvê-la de volta ao carregar um modelo salvo.
+    """
+    nn = torch.nn
+
+    class ConvolutionalClassifier(nn.Module):
+        """TextCNN (Kim, 2014) sobre sequências de embeddings de tweets do usuário.
+
+        Um ramo ``Conv1d`` por tamanho de kernel varre a sequência cronológica
+        de embeddings do usuário (o mesmo objeto de entrada da BiLSTM, não
+        tokens de um texto único), seguido de *max-pooling* mascarado no
+        tempo — as posições de preenchimento não podem vencer o máximo. Os
+        mapas de cada kernel são concatenados antes da cabeça linear.
+        """
+
+        def __init__(
+            self,
+            input_dim: int,
+            num_filters: int,
+            kernel_sizes: list[int],
+            n_classes: int,
+            dropout: float,
+        ) -> None:
+            super().__init__()
+            self.convolutions = nn.ModuleList(
+                [
+                    nn.Conv1d(
+                        in_channels=input_dim,
+                        out_channels=num_filters,
+                        kernel_size=kernel_size,
+                        padding="same",
+                    )
+                    for kernel_size in kernel_sizes
+                ]
+            )
+            self.activation = nn.ReLU()
+            self.dropout = nn.Dropout(dropout)
+            self.head = nn.Linear(num_filters * len(kernel_sizes), n_classes)
+
+        def forward(self, inputs: Any, mask: Any) -> Any:
+            """Propaga o lote e devolve os logits por classe."""
+            # Conv1d espera (lote, canais, tempo); a entrada chega como
+            # (lote, tempo, dim_embedding).
+            transposed = inputs.transpose(1, 2)
+            # Preenchimento vira um valor bem negativo (não -inf, para evitar
+            # NaN se uma sequência inteira ficasse mascarada) antes do
+            # max-pooling: do contrário, o viés de cada Conv1d ainda produz
+            # ativação não-nula nas posições de preenchimento, e o máximo no
+            # tempo poderia ser "vencido" por um tweet que nunca existiu.
+            invalid = (mask == 0).unsqueeze(1)
+            pooled_features = []
+            for convolution in self.convolutions:
+                activated = self.activation(convolution(transposed))
+                masked = activated.masked_fill(invalid, -1e4)
+                pooled_features.append(masked.max(dim=2).values)
+            concatenated = torch.cat(pooled_features, dim=1)
+            return self.head(self.dropout(concatenated))
+
+    ConvolutionalClassifier.__module__ = __name__
+    ConvolutionalClassifier.__qualname__ = ConvolutionalClassifier.__name__
+    globals()[ConvolutionalClassifier.__name__] = ConvolutionalClassifier
+    return ConvolutionalClassifier
+
+
+# Publica as classes em `globals()` já na importação do módulo — não apenas
 # no primeiro `fit`/`predict_proba`. Sem isso, um processo que só faz
 # `load_model` (como a etapa `evaluate` em execução isolada) desserializa
 # antes de qualquer chamada que construiria a classe, e o `pickle` falha
-# com "Can't get attribute 'RecurrentClassifier'".
+# com "Can't get attribute 'RecurrentClassifier'" (ou 'ConvolutionalClassifier').
 with contextlib.suppress(MissingDependencyError):
-    _build_recurrent_classifier_class(_import_torch())
+    _torch_module = _import_torch()
+    _build_recurrent_classifier_class(_torch_module)
+    _build_convolutional_classifier_class(_torch_module)
 
 
 class _RecurrentNetwork:
@@ -182,25 +253,118 @@ class _RecurrentNetwork:
         )
 
 
+class _ConvolutionalNetwork:
+    """Fábrica da arquitetura convolucional (definida sob demanda, com o torch importado)."""
+
+    @staticmethod
+    def build(
+        input_dim: int,
+        num_filters: int,
+        kernel_sizes: list[int],
+        n_classes: int,
+        dropout: float,
+    ) -> Any:
+        """Constrói o módulo TextCNN com *pooling* mascarado e cabeça linear."""
+        torch = _import_torch()
+        classifier_class = _build_convolutional_classifier_class(torch)
+        return classifier_class(
+            input_dim=input_dim,
+            num_filters=num_filters,
+            kernel_sizes=kernel_sizes,
+            n_classes=n_classes,
+            dropout=dropout,
+        )
+
+
+def build_sequence_network(
+    estimator: str,
+    input_dim: int,
+    n_classes: int,
+    params: dict[str, Any],
+) -> Any:
+    """Instancia a arquitetura sequencial a partir do nome configurado.
+
+    Parameters
+    ----------
+    estimator : str
+        Nome do estimador (``bilstm``, ``lstm`` ou ``cnn_text``).
+    input_dim : int
+        Dimensão dos embeddings de entrada.
+    n_classes : int
+        Número de classes.
+    params : dict
+        Hiperparâmetros de ``configs/model_params.yaml``.
+
+    Returns
+    -------
+    Any
+        Módulo PyTorch não treinado.
+
+    Raises
+    ------
+    UnknownModelError
+        Se o nome não estiver registrado.
+
+    Examples
+    --------
+    >>> build_sequence_network(  # doctest: +SKIP
+    ...     "cnn_text", input_dim=300, n_classes=3, params={"num_filters": 64}
+    ... )
+    """
+    # 'lstm' nunca chega aqui hoje — a entrada 'lstm' de model_params.yaml usa
+    # `estimator: bilstm` com hiperparâmetros diferentes —, mas é aceita aqui
+    # porque `factory.SEQUENCE_ESTIMATORS` já a registra como alias válido.
+    if estimator in {"bilstm", "lstm"}:
+        return _RecurrentNetwork.build(
+            input_dim=input_dim,
+            hidden_dim=int(params.get("hidden_dim", 128)),
+            num_layers=int(params.get("num_layers", 2)),
+            n_classes=n_classes,
+            dropout=float(params.get("dropout", 0.3)),
+            bidirectional=bool(params.get("bidirectional", True)),
+        )
+
+    if estimator == "cnn_text":
+        return _ConvolutionalNetwork.build(
+            input_dim=input_dim,
+            num_filters=int(params.get("num_filters", 128)),
+            kernel_sizes=list(params.get("kernel_sizes", [3, 4, 5])),
+            n_classes=n_classes,
+            dropout=float(params.get("dropout", 0.5)),
+        )
+
+    raise UnknownModelError(
+        f"Estimador sequencial desconhecido: '{estimator}'. Registrados: bilstm, lstm, cnn_text."
+    )
+
+
 @dataclass
 class SequenceClassifier(BaseUserClassifier):
-    """Classificador BiLSTM sobre sequências de embeddings por usuário.
+    """Classificador recorrente ou convolucional sobre sequências de embeddings.
 
     Parameters
     ----------
     name : str
         Nome do modelo.
     params : dict
-        Hiperparâmetros de ``configs/model_params.yaml`` (``hidden_dim``,
-        ``num_layers``, ``bidirectional``, ``dropout``, ``learning_rate``,
-        ``batch_size``, ``epochs``, ``patience``, ``max_tweets_per_user``).
+        Hiperparâmetros de ``configs/model_params.yaml``: ``hidden_dim``,
+        ``num_layers``, ``bidirectional`` (BiLSTM/LSTM) ou ``num_filters``,
+        ``kernel_sizes`` (CNN), além dos comuns ``dropout``,
+        ``learning_rate``, ``batch_size``, ``epochs``, ``patience``,
+        ``max_tweets_per_user``.
+    estimator_name : {'bilstm', 'lstm', 'cnn_text'}, optional
+        Arquitetura a construir, by default ``'bilstm'``. Ver
+        :func:`build_sequence_network`.
 
     Examples
     --------
     >>> modelo = SequenceClassifier(name="bilstm", params={"epochs": 5})
     >>> modelo.fit(treino)  # doctest: +SKIP
+    >>> cnn = SequenceClassifier(name="cnn_text", params={"epochs": 5}, estimator_name="cnn_text")
+    >>> cnn.fit(treino)  # doctest: +SKIP
     """
 
+    estimator_name: str = "bilstm"
     model_: Any = field(default=None, init=False, repr=False)
     input_dim_: int = field(default=0, init=False, repr=False)
 
@@ -286,13 +450,11 @@ class SequenceClassifier(BaseUserClassifier):
         inputs, mask = build_sequence_batch(ordered, max_length)
         self.input_dim_ = inputs.shape[2]
 
-        self.model_ = _RecurrentNetwork.build(
+        self.model_ = build_sequence_network(
+            self.estimator_name,
             input_dim=self.input_dim_,
-            hidden_dim=int(self._hyperparameter("hidden_dim", 128)),
-            num_layers=int(self._hyperparameter("num_layers", 2)),
             n_classes=len(self.classes),
-            dropout=float(self._hyperparameter("dropout", 0.3)),
-            bidirectional=bool(self._hyperparameter("bidirectional", True)),
+            params=self.params,
         ).to(device)
 
         tensor_inputs = torch.from_numpy(inputs).to(device)
