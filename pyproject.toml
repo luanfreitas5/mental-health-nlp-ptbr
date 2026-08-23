@@ -67,6 +67,8 @@ dependencies = [
     "mlflow>=3.15.1",
     # Interpretabilidade — contribuição científica declarada (SHAP Values)
     "shap>=0.46",
+    "markitdown[pptx]>=0.1.7",
+    "python-pptx>=1.0.2",
 ]
 
 [tool.uv]

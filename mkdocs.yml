@@ -94,6 +94,7 @@ nav:
       - Setup: guides/setup.md
       - Uso: guides/usage.md
       - Arquitetura: guides/architecture.md
+      - Etapas do Pipeline: guides/pipeline_stages.md
       - Ética e LGPD: guides/ethics.md
   - Referência da API: reference.md
 
