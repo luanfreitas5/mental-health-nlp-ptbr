@@ -18,7 +18,12 @@ from preprocessing.cleaning import (
     filter_by_quality,
     filter_users_by_activity,
 )
-from preprocessing.text import clean_text, normalize_text
+from preprocessing.text import (
+    clean_text_expr,
+    collapse_repeated_chars,
+    finish_normalize_text_expr,
+    normalize_text_expr,
+)
 from schemas.tweets import CleanTweetSchema, RawTweetSchema
 from schemas.validation import validate_frame
 from utils.lexicons import load_stopwords
@@ -29,6 +34,14 @@ logger = get_logger(__name__)
 
 def apply_text_processing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
     """Cria as colunas ``text_normalized`` e ``text_clean``.
+
+    Implementada com expressões polars vetorizadas (``pl.Expr.str.*``/
+    ``pl.Expr.list.eval``) em vez de uma função Python aplicada por tweet. A
+    única exceção é o colapso de repetições de caractere
+    (:func:`preprocessing.text.collapse_repeated_chars`): o padrão usa
+    referência retroativa, que o motor de regex do polars (Rust ``regex``,
+    sem backtracking) não suporta — só essa etapa isolada roda via
+    ``map_elements``, entre as duas metades vetorizadas da normalização.
 
     Parameters
     ----------
@@ -50,20 +63,27 @@ def apply_text_processing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
     cleaning = config.preprocessing.cleaning
     stopwords = load_stopwords() if cleaning.remove_stopwords else frozenset()
 
+    frame = frame.with_columns(
+        normalize_text_expr(pl.col(TEXT), normalization).alias(TEXT_NORMALIZED)
+    )
+
+    if normalization.collapse_repeated_chars:
+        keep = normalization.collapse_repeated_chars
+        frame = frame.with_columns(
+            pl.col(TEXT_NORMALIZED)
+            .map_elements(
+                lambda text: collapse_repeated_chars(text, keep),
+                return_dtype=pl.Utf8,
+            )
+            .alias(TEXT_NORMALIZED)
+        )
+
+    frame = frame.with_columns(
+        finish_normalize_text_expr(pl.col(TEXT_NORMALIZED), normalization).alias(TEXT_NORMALIZED)
+    )
+
     return frame.with_columns(
-        pl.col(TEXT)
-        .map_elements(
-            lambda text: normalize_text(text, normalization),
-            return_dtype=pl.Utf8,
-        )
-        .alias(TEXT_NORMALIZED)
-    ).with_columns(
-        pl.col(TEXT_NORMALIZED)
-        .map_elements(
-            lambda text: clean_text(text, cleaning, stopwords),
-            return_dtype=pl.Utf8,
-        )
-        .alias(TEXT_CLEAN)
+        clean_text_expr(pl.col(TEXT_NORMALIZED), cleaning, stopwords).alias(TEXT_CLEAN)
     )
 
 

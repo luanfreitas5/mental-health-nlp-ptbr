@@ -15,6 +15,9 @@ central para o projeto:
 from __future__ import annotations
 
 import unicodedata
+from typing import Final
+
+import polars as pl
 
 from config.settings import CleaningSection, NormalizationSection
 from constants.regex import (
@@ -32,6 +35,14 @@ from constants.regex import (
     URL_PATTERN,
     WHITESPACE_PATTERN,
 )
+
+#: Marcas diacríticas combinantes (bloco Unicode U+0300-U+036F: agudo, grave,
+#: til, cedilha combinante, trema), usado pela versão vetorizada de
+#: :func:`strip_accents` (:func:`_strip_accents_expr`) após decomposição NFD.
+#: Contém os caracteres reais (não ``\uXXXX``), como :data:`constants.regex.
+#: EMOJI_PATTERN`: o motor de regex Rust do polars não entende essa notação
+#: de escape do Python.
+_ACCENT_MARKS_PATTERN: Final[str] = "[̀-ͯ]"
 
 
 def strip_accents(text: str) -> str:
@@ -58,6 +69,64 @@ def strip_accents(text: str) -> str:
     # diacríticos latinos (ex.: silabas Hangul viram Jamo), o que violaria a
     # invariante de que remover acentos nunca aumenta o comprimento do texto.
     return unicodedata.normalize("NFC", stripped)
+
+
+def _strip_accents_expr(expr: pl.Expr) -> pl.Expr:
+    """Versão vetorizada de :func:`strip_accents` para uma expressão polars.
+
+    Mesma lógica (NFD, remove marcas combinantes, recompõe NFC), reescrita
+    como expressões nativas para rodar sobre a coluna inteira em uma
+    passada, sem UDF por linha. Usada tanto na etapa de limpeza
+    (:func:`clean_text_expr`, texto inteiro) quanto na comparação de
+    stopwords sem acento por token (dentro de ``list.eval``).
+
+    Parameters
+    ----------
+    expr : pl.Expr
+        Expressão de texto (coluna inteira ou ``pl.element()`` de uma lista).
+
+    Returns
+    -------
+    pl.Expr
+        Expressão sem sinais diacríticos.
+    """
+    return (
+        expr.str.normalize("NFD")
+        .str.replace_all(_ACCENT_MARKS_PATTERN, "", literal=False)
+        .str.normalize("NFC")
+    )
+
+
+def collapse_repeated_chars(text: str, keep: int) -> str:
+    """Colapsa sequências de 3+ repetições do mesmo caractere para ``keep`` cópias.
+
+    Isolada como função própria porque é a única etapa de
+    :func:`normalize_text` sem equivalente vetorizado no polars: o padrão
+    (:data:`constants.regex.REPEATED_CHARS_PATTERN`) usa uma referência
+    retroativa (``(.)\\1{2,}``) que o motor de regex do polars (Rust
+    ``regex``, sem suporte a backtracking) não implementa. Reusada pelo
+    caminho escalar (:func:`_apply_normalization_options`) e pelo caminho
+    vetorizado (``preprocessing.pipeline.apply_text_processing``, via
+    ``map_elements`` restrito a esta única etapa).
+
+    Parameters
+    ----------
+    text : str
+        Texto de entrada.
+    keep : int
+        Número de cópias do caractere repetido a preservar.
+
+    Returns
+    -------
+    str
+        Texto com as repetições colapsadas.
+
+    Examples
+    --------
+    >>> collapse_repeated_chars("muitooooo triste", keep=2)
+    'muitoo triste'
+    """
+    return REPEATED_CHARS_PATTERN.sub(lambda match: match.group(1) * keep, text)
 
 
 def normalize_text(text: str, config: NormalizationSection) -> str:
@@ -190,8 +259,7 @@ def _apply_normalization_options(text: str, config: NormalizationSection) -> str
         result = HASHTAG_PATTERN.sub(r"\1", result)
 
     if config.collapse_repeated_chars:
-        keep = config.collapse_repeated_chars
-        result = REPEATED_CHARS_PATTERN.sub(lambda match: match.group(1) * keep, result)
+        result = collapse_repeated_chars(result, config.collapse_repeated_chars)
 
     if config.demojize:
         result = EMOJI_PATTERN.sub(" ", result)
@@ -326,6 +394,152 @@ def _is_removable_stopword(
         and token not in whitelist
         and strip_accents(token) in normalized_stopwords
     )
+
+
+# --- Versões vetorizadas (polars), usadas por preprocessing.pipeline -------
+#
+# Reescrevem normalize_text/clean_text como expressões pl.Expr.str.* /
+# pl.Expr.list.eval em vez de map_elements (UDF Python por tweet). A única
+# exceção é o colapso de repetições de caractere (ver
+# :func:`collapse_repeated_chars`): o padrão regex correspondente usa
+# referência retroativa, que o motor Rust do polars não suporta, então essa
+# etapa isolada continua via map_elements em
+# ``preprocessing.pipeline.apply_text_processing``.
+
+
+def normalize_text_expr(expr: pl.Expr, config: NormalizationSection) -> pl.Expr:
+    """Versão vetorizada de :func:`normalize_text`, até o desempacotamento de hashtags.
+
+    Cobre unicode, remoção de retweet/caracteres de controle, redação de PII
+    e desempacotamento de hashtags — tudo que antecede o colapso de
+    repetições na ordem original de :func:`normalize_text`. O restante
+    (colapso de repetições, demojização, colapso de espaços, strip) é
+    aplicado por :func:`finish_normalize_text_expr`, depois do
+    ``map_elements`` isolado para o colapso de repetições — ver
+    ``preprocessing.pipeline.apply_text_processing`` para a ordem completa.
+
+    Parameters
+    ----------
+    expr : pl.Expr
+        Expressão da coluna de texto bruto.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    pl.Expr
+        Expressão do texto parcialmente normalizado.
+    """
+    result = expr.fill_null("").str.normalize(config.unicode_form)
+    result = result.str.replace_all(RETWEET_PATTERN.pattern, "", literal=False)
+
+    if config.strip_control_chars:
+        result = result.str.replace_all(CONTROL_CHARS_PATTERN.pattern, " ", literal=False)
+
+    result = _pii_redaction_expr(result, config)
+
+    if config.unpack_hashtags:
+        result = result.str.replace_all(HASHTAG_PATTERN.pattern, r"${1}", literal=False)
+
+    return result
+
+
+def _pii_redaction_expr(expr: pl.Expr, config: NormalizationSection) -> pl.Expr:
+    """Versão vetorizada de :func:`_apply_pii_redaction`.
+
+    E-mail antes de menção, telefone antes de número (mesma ordem).
+    """
+    result = expr
+    if config.replace_emails is not None:
+        result = result.str.replace_all(EMAIL_PATTERN.pattern, config.replace_emails, literal=False)
+    if config.replace_urls is not None:
+        result = result.str.replace_all(URL_PATTERN.pattern, config.replace_urls, literal=False)
+    if config.replace_mentions is not None:
+        result = result.str.replace_all(
+            MENTION_PATTERN.pattern, config.replace_mentions, literal=False
+        )
+    if config.replace_phone_numbers is not None:
+        result = result.str.replace_all(
+            PHONE_PATTERN.pattern, config.replace_phone_numbers, literal=False
+        )
+    if config.replace_numbers is not None:
+        result = result.str.replace_all(
+            NUMBER_PATTERN.pattern, config.replace_numbers, literal=False
+        )
+    return result
+
+
+def finish_normalize_text_expr(expr: pl.Expr, config: NormalizationSection) -> pl.Expr:
+    """Conclui :func:`normalize_text_expr` após o colapso de repetições.
+
+    Aplica demojização, colapso de espaços e o strip final — mesma ordem de
+    :func:`_apply_normalization_options`, na parte que roda depois do
+    ``map_elements`` de :func:`collapse_repeated_chars`.
+
+    Parameters
+    ----------
+    expr : pl.Expr
+        Expressão da coluna já com as repetições colapsadas.
+    config : NormalizationSection
+        Seção ``normalization`` de ``configs/preprocessing.yaml``.
+
+    Returns
+    -------
+    pl.Expr
+        Expressão do texto normalizado, pronta para gravação.
+    """
+    result = expr
+    if config.demojize:
+        result = result.str.replace_all(EMOJI_PATTERN.pattern, " ", literal=False)
+    if config.collapse_whitespace:
+        result = result.str.replace_all(WHITESPACE_PATTERN.pattern, " ", literal=False)
+    return result.str.strip_chars()
+
+
+def clean_text_expr(expr: pl.Expr, config: CleaningSection, stopwords: frozenset[str]) -> pl.Expr:
+    """Versão vetorizada de :func:`clean_text`.
+
+    Reescreve a redução léxica (minúsculas, emoji, acentos, pontuação) e a
+    filtragem de tokens (comprimento mínimo, whitelist, stopwords sem
+    acento) como expressões ``pl.Expr.str.*``/``pl.Expr.list.eval``, sem UDF
+    por tweet.
+
+    Parameters
+    ----------
+    expr : pl.Expr
+        Expressão da coluna de texto já normalizado.
+    config : CleaningSection
+        Seção ``cleaning`` de ``configs/preprocessing.yaml``.
+    stopwords : frozenset of str
+        Stopwords a remover.
+
+    Returns
+    -------
+    pl.Expr
+        Expressão do texto limpo, com tokens separados por espaço.
+    """
+    result = expr.fill_null("")
+    if config.lowercase:
+        result = result.str.to_lowercase()
+    if config.remove_emojis:
+        result = result.str.replace_all(EMOJI_PATTERN.pattern, " ", literal=False)
+    if config.remove_accents:
+        result = _strip_accents_expr(result)
+    if config.remove_punctuation:
+        result = result.str.replace_all(PUNCTUATION_PATTERN.pattern, " ", literal=False)
+
+    tokens = result.str.extract_all(r"\S+")
+    keep = pl.element().str.len_chars() >= config.min_token_length
+
+    if config.remove_stopwords and stopwords:
+        whitelist = [term.lower() for term in config.stopwords_whitelist]
+        normalized_stopwords = [strip_accents(stopword) for stopword in stopwords]
+        removable = ~pl.element().is_in(whitelist) & _strip_accents_expr(pl.element()).is_in(
+            normalized_stopwords
+        )
+        keep = keep & ~removable
+
+    return tokens.list.eval(pl.element().filter(keep)).list.join(" ")
 
 
 def tokenize(text: str) -> list[str]:
