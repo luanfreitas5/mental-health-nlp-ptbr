@@ -38,9 +38,17 @@ pedido:
   pandas→polars a fazer).
 - Sequenciamento: perfilar primeiro (Fase 0), decidir prioridade/escopo das
   Fases 1 e 2 com base nos achados.
-- Retomada em diretórios em lote: sem manifesto novo — `list_collected_users`
-  passa a agregar `user_id` via `pl.scan_parquet(dir/*.parquet).select(...).unique()`
-  quando o diretório é particionado por lote em vez de por usuário.
+- Retomada em diretórios em lote: `list_collected_users` passa a agregar `user_id`
+  via `pl.scan_parquet(dir/*.parquet).select(...).unique()` quando o diretório é
+  particionado por lote em vez de por usuário. **Refinamento identificado durante
+  o planejamento da Fase 2** (ver seção "Fase 2" abaixo): esse scan por si só não
+  basta quando um usuário do lote é inteiramente filtrado (fica sem nenhuma linha
+  de saída) — nesse caso ele nunca apareceria na coluna `user_id` dos dados e
+  seria reprocessado para sempre. A correção é um manifesto pequeno por lote
+  (`_batches/batch_NNNNN.parquet`, só a coluna `user_id`), análogo aos arquivos
+  `.owner` já usados no cache de embeddings — não é a estrutura de manifesto
+  "grande" que a pergunta original descartava, mas uma exigida pela correção do
+  próprio critério "já processado".
 - `memray` será adicionado como dependência dev, ao lado do `scalene` já
   existente.
 
@@ -148,15 +156,24 @@ spaCy/torch carregadas no processo pai):
    arquivo determinístico (`batch_<indice_zero_padded>.parquet` — sequencial
    e reprodutível, não hash, para facilitar depuração e ordenação no
    diretório).
-4. **Retomada**: nova função `data.reader.list_collected_users_batched(directory)`
-   = `pl.scan_parquet(directory/"*.parquet").select("user_id").unique().collect()["user_id"].to_list()`.
-   Usada no lugar de `list_collected_users` (que assume 1 arquivo = 1
-   usuário) especificamente para os diretórios que passam a ser gravados em
-   lote (`tweets_clean`, `user_features_raw`). Diretórios que continuam
-   particionados por usuário (`tweets_labeled`, `psychological_scores`,
-   cache de embeddings) continuam usando `list_collected_users` normalmente
-   — mudança é local às etapas 2 e 6, não ao módulo `data.reader` como um
-   todo.
+4. **Retomada**: um usuário do lote pode ficar sem nenhuma linha de saída (conta
+   automatizada, abaixo de `min_tweets_per_user`) e ainda assim precisa contar
+   como "já processado" — hoje isso é garantido por `write_user_partition`
+   gravar um arquivo mesmo vazio, indexado pelo nome do arquivo. Em lote, a
+   solução é um **manifesto por lote**: `data.writer.write_batch_manifest`
+   grava, em `directory/_batches/batch_NNNNN.parquet`, todo `user_id` que
+   tinha ao menos uma linha de **entrada** no lote (mesmo critério que hoje
+   dispara `write_user_partition`) — não os dados em si, só a coluna
+   `user_id`. `data.reader.list_collected_users_batched(directory)` agrega
+   esses manifestos via `pl.scan_parquet(directory/"_batches/*.parquet").select("user_id").unique()`.
+   Como `_batches/` é um subdiretório, `list_files`/`read_partitioned`
+   (`glob("*.parquet")` não-recursivo no diretório de dados) nunca o leem por
+   engano — o padrão é análogo aos arquivos `.owner` já usados no cache de
+   embeddings (`pipelines.embedding`). Usado no lugar de `list_collected_users`
+   especificamente para os diretórios gravados em lote (`tweets_clean`,
+   `user_features_raw`); diretórios que continuam particionados por usuário
+   (`tweets_labeled`, `psychological_scores`, cache de embeddings) continuam
+   usando `list_collected_users` normalmente.
 5. **Progresso**: `rich.progress` não é seguro entre processos. A barra passa
    a avançar por **lote concluído** via
    `concurrent.futures.as_completed(futures)`, uma unidade a cada 50–200
