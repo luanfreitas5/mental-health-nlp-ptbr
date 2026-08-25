@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import numpy as np
 import polars as pl
 
 from config.logging import get_logger
+from config.settings import FeaturesConfig
 from constants.columns import USER_ID
 from data.catalog import write_dataset_manifest
 from data.reader import (
@@ -26,10 +28,71 @@ from pipelines.base import PipelineStage, StageContext
 from schemas.features import list_feature_columns, validate_feature_matrix
 from utils.files import list_files, write_json
 from utils.hashing import hash_dataframe
-from utils.progress import track
+from utils.parallel import resolve_worker_count, run_user_pool
 from utils.validation import summarize_missing
 
 logger = get_logger(__name__)
+
+
+def _build_and_write_user_row(
+    user_id: str,
+    tweets_dir: Path,
+    metadata: pl.DataFrame | None,
+    scores_dir: Path | None,
+    config: FeaturesConfig,
+    features_raw_dir: Path,
+) -> str | None:
+    """Monta e grava a linha de atributos brutos de um único usuário — roda em processo worker.
+
+    Função de nível de módulo (não um método), condição necessária para ser
+    "picklable" e distribuível via ``ProcessPoolExecutor`` (ver
+    :func:`utils.parallel.run_user_pool`).
+
+    Parameters
+    ----------
+    user_id : str
+        Identificador pseudonimizado do usuário a processar.
+    tweets_dir : Path
+        Diretório dos tweets rotulados, particionado por usuário.
+    metadata : pl.DataFrame, optional
+        Metadados públicos já restritos a este usuário (uma linha, ou
+        ``None``), extraídos no processo principal antes da distribuição.
+    scores_dir : Path, optional
+        Diretório dos vetores psicológicos, particionado por usuário.
+    config : FeaturesConfig
+        Seção ``features`` de ``configs/features.yaml``.
+    features_raw_dir : Path
+        Diretório de destino de ``user_features_raw/``.
+
+    Returns
+    -------
+    str or None
+        O próprio ``user_id`` se algo foi gravado, ``None`` se o usuário não
+        tinha tweets (nada a fazer).
+
+    Examples
+    --------
+    >>> _build_and_write_user_row(
+    ...     "u_a", tweets_dir, None, None, config.features, features_raw_dir
+    ... )  # doctest: +SKIP
+    """
+    user_tweets = read_user_partition(tweets_dir, user_id)
+    if user_tweets.is_empty():
+        return None
+
+    user_scores = None
+    if scores_dir is not None:
+        candidate = read_user_partition(scores_dir, user_id)
+        user_scores = candidate if not candidate.is_empty() else None
+
+    raw_row = build_user_features_raw(
+        user_tweets,
+        config,
+        metadata=metadata,
+        psychological_scores=user_scores,
+    )
+    write_user_partition(raw_row, features_raw_dir, user_id)
+    return user_id
 
 
 class FeaturesStage(PipelineStage):
@@ -106,7 +169,13 @@ class FeaturesStage(PipelineStage):
 
         if pending:
             self._build_pending_user_features(
-                paths.data.tweets_labeled, metadata, scores_dir, pending, config, paths
+                paths.data.tweets_labeled,
+                metadata,
+                scores_dir,
+                pending,
+                config,
+                paths,
+                resolve_worker_count(context.option("workers")),
             )
 
         processed_users = list_collected_users(paths.data.user_features_raw)
@@ -138,7 +207,7 @@ class FeaturesStage(PipelineStage):
         A metadata é um artefato único e pequeno (uma linha por usuário) e por
         isso é lida por inteiro; os vetores psicológicos, por serem
         particionados por usuário, ficam como um diretório — cada usuário lê
-        só o próprio arquivo dentro de :meth:`_build_and_write_user_row`.
+        só o próprio arquivo dentro de :func:`_build_and_write_user_row`.
         """
         metadata = (
             read_parquet(paths.data.user_metadata) if paths.data.user_metadata.is_file() else None
@@ -163,45 +232,40 @@ class FeaturesStage(PipelineStage):
         pending: list[str],
         config: Any,
         paths: Any,
+        max_workers: int,
     ) -> None:
-        """Constrói e grava, usuário a usuário, a linha de atributos brutos dos pendentes."""
+        """Constrói e grava, em processos paralelos, a linha de atributos brutos dos pendentes.
+
+        Cada usuário é independente dos demais (mesmos seis grupos de
+        :func:`features.builder.build_user_features_raw`, sem estado
+        compartilhado), então o laço é distribuído entre processos via
+        :func:`utils.parallel.run_user_pool`. A metadata é particionada uma
+        única vez aqui — cada worker recebe só a fatia (uma linha, ou
+        ``None``) do usuário que vai processar, não o DataFrame inteiro.
+        """
         metadata_groups = (
             metadata.partition_by(USER_ID, as_dict=True, maintain_order=True)
             if metadata is not None
             else {}
         )
 
-        for user_id in track(pending, "Construindo atributos por usuário"):
-            self._build_and_write_user_row(
-                user_id, tweets_dir, metadata_groups, scores_dir, config, paths
+        jobs = {
+            user_id: partial(
+                _build_and_write_user_row,
+                user_id,
+                tweets_dir,
+                metadata_groups.get((user_id,)),
+                scores_dir,
+                config.features,
+                paths.data.user_features_raw,
             )
-
-    def _build_and_write_user_row(
-        self,
-        user_id: str,
-        tweets_dir: Path,
-        metadata_groups: dict[Any, pl.DataFrame],
-        scores_dir: Path | None,
-        config: Any,
-        paths: Any,
-    ) -> None:
-        """Monta e grava a linha de atributos brutos de um único usuário, se houver tweets."""
-        user_tweets = read_user_partition(tweets_dir, user_id)
-        if user_tweets.is_empty():
-            return
-
-        user_scores = None
-        if scores_dir is not None:
-            candidate = read_user_partition(scores_dir, user_id)
-            user_scores = candidate if not candidate.is_empty() else None
-
-        raw_row = build_user_features_raw(
-            user_tweets,
-            config.features,
-            metadata=metadata_groups.get((user_id,)),
-            psychological_scores=user_scores,
+            for user_id in pending
+        }
+        run_user_pool(
+            jobs,
+            description="Construindo atributos por usuário",
+            max_workers=max_workers,
         )
-        write_user_partition(raw_row, paths.data.user_features_raw, user_id)
 
     def _finalize_features(
         self, raw: pl.DataFrame, config: Any, labels: pl.DataFrame, context: StageContext

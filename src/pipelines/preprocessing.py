@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from config.logging import get_logger
+from config.settings import Config
 from data.reader import (
     count_partitioned_rows,
     list_collected_users,
@@ -15,9 +17,50 @@ from data.reader import (
 from data.writer import write_user_partition
 from pipelines.base import PipelineStage, StageContext
 from preprocessing.pipeline import run_preprocessing
-from utils.progress import track
+from utils.parallel import resolve_worker_count, run_user_pool
 
 logger = get_logger(__name__)
+
+
+def _preprocess_user(
+    user_id: str,
+    user_histories_dir: Path,
+    tweets_clean_dir: Path,
+    config: Config,
+) -> str | None:
+    """Lê, limpa e grava um único usuário — roda dentro de um processo worker.
+
+    Função de nível de módulo (não um método), condição necessária para ser
+    "picklable" e distribuível via ``ProcessPoolExecutor`` (ver
+    :func:`utils.parallel.run_user_pool`).
+
+    Parameters
+    ----------
+    user_id : str
+        Identificador pseudonimizado do usuário a processar.
+    user_histories_dir : Path
+        Diretório com o histórico bruto particionado por usuário.
+    tweets_clean_dir : Path
+        Diretório de destino dos tweets limpos, particionado por usuário.
+    config : Config
+        Configuração completa e validada do projeto.
+
+    Returns
+    -------
+    str or None
+        O próprio ``user_id`` se algo foi gravado, ``None`` se o usuário não
+        tinha histórico bruto (nada a fazer).
+
+    Examples
+    --------
+    >>> _preprocess_user("u_a", diretorio_bruto, diretorio_limpo, config)  # doctest: +SKIP
+    """
+    user_raw = read_user_history(user_histories_dir, user_id)
+    if user_raw.is_empty():
+        return None
+    user_clean = run_preprocessing(user_raw, config, allow_empty=True)
+    write_user_partition(user_clean, tweets_clean_dir, user_id)
+    return user_id
 
 
 class PreprocessingStage(PipelineStage):
@@ -29,7 +72,10 @@ class PreprocessingStage(PipelineStage):
     se a execução for interrompida, os já processados não são refeitos na
     próxima chamada (ver :func:`data.reader.select_pending_users`).
     ``--limit-users`` limita quantos usuários pendentes esta execução
-    processa.
+    processa. O laço por usuário é CPU-bound (deduplicação, normalização,
+    limpeza de texto) e cada usuário é independente dos demais, então é
+    distribuído entre processos via :func:`utils.parallel.run_user_pool`
+    (``--workers`` controla o grau de paralelismo).
     """
 
     name = "preprocess"
@@ -69,12 +115,21 @@ class PreprocessingStage(PipelineStage):
             len(pending),
         )
 
-        for user_id in track(pending, "Pré-processando usuários"):
-            user_raw = read_user_history(paths.data.user_histories, user_id)
-            if user_raw.is_empty():
-                continue
-            user_clean = run_preprocessing(user_raw, context.config, allow_empty=True)
-            write_user_partition(user_clean, paths.data.tweets_clean, user_id)
+        jobs = {
+            user_id: partial(
+                _preprocess_user,
+                user_id,
+                paths.data.user_histories,
+                paths.data.tweets_clean,
+                context.config,
+            )
+            for user_id in pending
+        }
+        run_user_pool(
+            jobs,
+            description="Pré-processando usuários",
+            max_workers=resolve_worker_count(context.option("workers")),
+        )
 
         processed_users = list_collected_users(paths.data.tweets_clean)
         n_clean_tweets = count_partitioned_rows(paths.data.tweets_clean) if processed_users else 0

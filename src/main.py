@@ -163,6 +163,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     execution.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Número de processos paralelos no laço por usuário das etapas CPU-bound "
+            "(preprocess, features). Padrão: todos os núcleos detectados."
+        ),
+    )
+    execution.add_argument(
         "--continue-on-error",
         action="store_true",
         help="Prossegue para a próxima etapa mesmo se uma falhar.",
@@ -223,6 +233,7 @@ def build_context(arguments: argparse.Namespace) -> StageContext:
         "allow_collection_without_ethics": arguments.allow_collection_without_ethics,
         "all_encoders": arguments.all_encoders,
         "limit_users": arguments.limit_users,
+        "workers": arguments.workers,
         "seed": seed,
     }
 
