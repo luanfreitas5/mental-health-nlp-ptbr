@@ -1,0 +1,1056 @@
+<h1 id="etapas-do-pipeline-210">Etapas do Pipeline (2–10)</h1>
+<p>Este guia descreve, com base no código-fonte atual em <a href="../../src"><code>src/</code></a>, como cada
+etapa do pipeline é implementada — da etapa <strong>2 (<code>preprocess</code>)</strong> até a etapa
+<strong>10 (<code>report</code>)</strong>.</p>
+<p>A numeração segue o registro central em
+<a href="../../src/pipelines/workflow.py"><code>src/pipelines/workflow.py</code></a> (dicionário <code>STAGES</code>),
+que é a única fonte de verdade sobre quais etapas existem e em que ordem rodam:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>#</th><th>Nome (<code>--stage</code>)</th><th>Classe</th><th>Módulo</th></tr></thead><tbody><tr><td>1</td><td><code>collect</code></td><td><code>CollectionStage</code></td><td>fora do DAG do DVC — exige aprovação ética, roda manualmente via <code>make collect</code></td></tr><tr><td>2</td><td><code>preprocess</code></td><td><code>PreprocessingStage</code></td><td><code>src/pipelines/preprocessing.py</code></td></tr><tr><td>3</td><td><code>label</code></td><td><code>LabelingStage</code></td><td><code>src/pipelines/labeling.py</code></td></tr><tr><td>4</td><td><code>psych</code></td><td><code>PsychologicalStage</code></td><td><code>src/pipelines/psychological.py</code></td></tr><tr><td>5</td><td><code>embed</code></td><td><code>EmbeddingStage</code></td><td><code>src/pipelines/embedding.py</code></td></tr><tr><td>6</td><td><code>features</code></td><td><code>FeaturesStage</code></td><td><code>src/pipelines/features.py</code></td></tr><tr><td>7</td><td><code>split</code></td><td><code>SplittingStage</code></td><td><code>src/pipelines/splitting.py</code></td></tr><tr><td>8</td><td><code>train</code></td><td><code>TrainingStage</code></td><td><code>src/pipelines/training.py</code></td></tr><tr><td>9</td><td><code>evaluate</code></td><td><code>EvaluationStage</code></td><td><code>src/pipelines/evaluation.py</code></td></tr><tr><td>10</td><td><code>report</code></td><td><code>ReportingStage</code></td><td><code>src/pipelines/reporting.py</code></td></tr></tbody></table>
+<p>Todas as etapas herdam de <code>PipelineStage</code> (<code>src/pipelines/base.py</code>), que define o
+contrato comum: <code>name</code>, <code>description</code>, <code>required_inputs</code> (verificados em
+<code>check_dependencies</code> antes de qualquer processamento) e <code>run(context)</code>. O
+orquestrador (<code>src/main.py</code> → <code>pipelines/workflow.run_pipeline</code>) executa as
+etapas 2–10, em sequência, quando chamado com <code>--stage all</code> (a etapa <code>collect</code>
+fica de fora de propósito). Cada etapa também é uma stage independente no DAG
+reprodutível do DVC (<code>dvc.yaml</code>), com <code>deps</code>/<code>outs</code>/<code>metrics</code> declarados.</p>
+<p>Um padrão recorrente nas etapas 2–6 é o <strong>processamento incremental por
+usuário</strong>: cada uma compara os usuários já disponíveis na entrada com os já
+processados na saída (<code>select_pending_users</code>), processa só a diferença, e
+grava o resultado de cada usuário imediatamente (<code>write_user_partition</code>). Isso
+torna reexecuções seguras e baratas, e permite retomar uma execução
+interrompida sem reprocessar trabalho já feito — importante em etapas caras
+(LLM, embeddings) que podem levar horas.</p>
+<hr>
+<h2 id="etapa-2--preprocessamento">Etapa 2 — Preprocessamento</h2>
+<h3 id="objetivo">Objetivo</h3>
+<p>Consolidar o histórico bruto coletado por usuário, aplicar deduplicação e
+filtros de qualidade, gerar duas versões de texto (uma preservando semântica
+para modelos Transformer/LLM, outra agressivamente normalizada para
+TF-IDF/léxicos) e descartar tweets/usuários que não sustentam o estudo
+longitudinal.</p>
+<h3 id="entradas--saídas">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>PreprocessingStage</code> em <code>src/pipelines/preprocessing.py</code>.</li>
+<li><strong>Entrada obrigatória</strong> (<code>required_inputs</code>): <code>paths.data.user_histories</code> — o
+diretório particionado por usuário produzido pela etapa <code>collect</code>.</li>
+<li><strong>Saída</strong>: <code>data/interim/tweets_clean/</code>, particionado por usuário — um
+<code>.parquet</code> por <code>user_id</code>, gravado via <code>write_user_partition</code>
+(<code>src/data/writer.py</code>).</li>
+<li><strong>Retorno de <code>run()</code></strong>: contagens de tweets/usuários de entrada e saída,
+<code>taxa_retencao</code>, <code>usuarios_processados_nesta_execucao</code> e o caminho gravado.</li>
+</ul>
+<h3 id="implementação-passo-a-passo">Implementação (passo a passo)</h3>
+<ol>
+<li>
+<p><strong>Descoberta do que falta processar</strong> (<code>PreprocessingStage.run</code>):
+<code>list_collected_users</code> (<code>src/data/reader.py</code>) lista os usuários já
+presentes em <code>user_histories</code> (entrada) e em <code>tweets_clean</code> (já
+processados); <code>count_partitioned_rows</code> conta o total de tweets brutos
+disponíveis; <code>select_pending_users(available, already_processed, limit)</code>
+calcula a diferença de conjuntos, ordena deterministicamente e aplica
+<code>--limit-users</code>.</p>
+</li>
+<li>
+<p><strong>Processamento por usuário</strong> (<code>for user_id in track(pending, ...)</code>), um de
+cada vez, sem materializar mais de um histórico simultaneamente:</p>
+<ul>
+<li><code>read_user_history(user_histories, user_id)</code> lê só o <code>.parquet</code> daquele
+usuário, deduplica por <code>tweet_id</code> e ordena por <code>created_at</code>;</li>
+<li>se vazio, pula;</li>
+<li><code>run_preprocessing(user_raw, config, allow_empty=True)</code>
+(<code>src/preprocessing/pipeline.py</code>) executa a etapa completa (detalhada
+abaixo);</li>
+<li><code>write_user_partition(user_clean, tweets_clean, user_id)</code> grava o
+resultado imediatamente — inclusive quando fica vazio (ex.: usuário
+inteiramente filtrado por ser conta automatizada), preservando o registro
+de que o usuário já foi tratado.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>run_preprocessing</code></strong> (orquestrador central):</p>
+<ul>
+<li>valida a entrada contra <code>RawTweetSchema</code> (<code>validate_frame</code>);</li>
+<li>aplica os passos em ordem deliberada — "barato antes de caro":
+<ol>
+<li><code>deduplicate</code> (<code>src/preprocessing/cleaning.py</code>) — remove duplicatas
+por <code>tweet_id</code> e por texto-dentro-do-usuário. Texto idêntico <em>entre</em>
+usuários (correntes, letras de música) é preservado como sinal, não
+ruído, por padrão;</li>
+<li><code>filter_by_quality</code> — usa <code>configs/collection.yaml:filters</code>
+(comprimento mínimo/máximo de caracteres, idioma);</li>
+<li><code>filter_automated_accounts</code> — remove usuários com média de
+tweets/dia acima de <code>collection.filters.max_tweets_per_day</code> (contas
+de notícia/bot/divulgação distorceriam rótulo e features temporais);</li>
+<li><code>apply_text_processing</code> — cria as colunas <code>text_normalized</code>
+(<code>normalize_text</code>) e <code>text_clean</code> (<code>clean_text</code>);</li>
+<li><code>filter_after_cleaning</code> — descarta tweets que ficaram vazios ou com
+poucos tokens após a limpeza agressiva;</li>
+<li><code>filter_users_by_activity</code> — reavaliada <strong>por último</strong>, pois os
+filtros anteriores podem ter derrubado um usuário abaixo do mínimo de
+<code>min_tweets_per_user</code>/<code>min_active_days</code>;</li>
+</ol>
+</li>
+<li>com <code>allow_empty=True</code> (usado no laço por usuário), um único usuário
+zerado é esperado, não uma falha; a saída é validada contra
+<code>CleanTweetSchema</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>normalize_text</code> / <code>clean_text</code></strong> (<code>src/preprocessing/text.py</code>) — os dois
+caminhos de texto, intencionalmente distintos:</p>
+<ul>
+<li><code>normalize_text</code>: normalização Unicode (NFC), remoção de RT/caracteres
+de controle, redação de PII por placeholders (e-mail → <code>EMAIL</code>, URL →
+<code>URL</code>, menção → <code>@user</code>, telefone → <code>TELEFONE</code>), desempacotamento de
+hashtags (<code>#depressao</code> → <code>depressao</code>), colapso de caracteres repetidos
+(<code>muitooooo</code> → <code>muitoo</code>, mantendo ênfase). Preserva caixa, pontuação,
+emoji e negações — é a entrada dos Transformers/LLM;</li>
+<li><code>clean_text</code>: minúsculas, remoção de emoji/pontuação/acentos (acentos
+mantidos por padrão em pt-BR), remoção de stopwords exceto uma
+<em>whitelist</em> (pronomes de 1ª pessoa e negações — <code>eu</code>, <code>não</code>, <code>nunca</code>,
+<code>sem</code> — features centrais na literatura de depressão), filtragem por
+comprimento mínimo de token. É a entrada de TF-IDF/n-grams/léxicos;</li>
+<li><code>contains_pii</code> — salvaguarda usada antes de enviar texto ao LLM na
+etapa 4.</li>
+</ul>
+</li>
+<li>
+<p><strong>Tokenização/lematização</strong> (<code>src/preprocessing/tokenization.py</code>, classe
+<code>Tokenizer</code>) — utilitário usado por etapas posteriores (features), não
+pelo <code>PreprocessingStage</code> diretamente. Usa spaCy (<code>pt_core_news_sm</code>) com
+fallback automático para tokenização por regex se o modelo não estiver
+instalado.</p>
+</li>
+<li>
+<p><strong>Stopwords</strong>: <code>configs/lexicons/stopwords_ptbr.txt</code> (113 termos), via
+<code>utils.lexicons.load_stopwords</code>.</p>
+</li>
+</ol>
+<h3 id="configuração-relevante">Configuração relevante</h3>
+<ul>
+<li><code>configs/preprocessing.yaml</code>: <code>deduplication</code> (<code>by_tweet_id</code>,
+<code>by_text_within_user</code>, <code>by_text_global: false</code>), <code>normalization</code>
+(placeholders de PII, <code>unpack_hashtags</code>, <code>collapse_repeated_chars: 2</code>),
+<code>cleaning</code> (<code>lowercase</code>, <code>remove_punctuation</code>, <code>remove_emojis</code>,
+<code>remove_accents: false</code>, <code>stopwords_whitelist</code>, <code>min_token_length: 2</code>),
+<code>tokenization</code> (<code>backend: spacy</code>, <code>spacy_model: pt_core_news_sm</code>,
+<code>lemmatize: true</code>), <code>filters</code> (<code>min_tokens_per_tweet: 3</code>,
+<code>drop_empty_after_cleaning: true</code>).</li>
+<li><code>configs/collection.yaml</code>: fonte de <code>filters.min_chars_per_tweet</code> /
+<code>max_chars_per_tweet</code> / <code>max_tweets_per_day</code> / <code>require_language</code> e de
+<code>user_history.min_tweets_per_user</code> / <code>min_active_days</code>, usados pelos
+filtros acima.</li>
+<li><code>configs/lexicons/stopwords_ptbr.txt</code>: lista de stopwords pt-BR.</li>
+</ul>
+<h3 id="design-notável">Design notável</h3>
+<ul>
+<li>Processamento incremental por usuário com retomada via
+<code>select_pending_users</code> + gravação imediata.</li>
+<li>Contrato de dados validado nas duas pontas (<code>RawTweetSchema</code> na entrada,
+<code>CleanTweetSchema</code> na saída).</li>
+<li><code>allow_empty=True</code> no laço por usuário evita que um único usuário
+totalmente filtrado derrube a execução.</li>
+<li>Duas colunas de texto (<code>text_normalized</code> vs. <code>text_clean</code>) — decisão
+central de design: preservar semântica para Transformers/LLM vs. reduzir
+agressivamente para TF-IDF/léxicos.</li>
+</ul>
+<hr>
+<h2 id="etapa-3--rotulagem">Etapa 3 — Rotulagem</h2>
+<h3 id="objetivo-1">Objetivo</h3>
+<p>Produzir dois níveis de rótulo: (1) sentimento e emoções por tweet, via
+encoders Transformer; (2) classe do usuário (<code>controle</code> / <code>depressao</code> /
+<code>ideacao_suicida</code>) por <strong>supervisão fraca</strong>, combinando votos de três fontes
+ponderadas, com consenso mínimo, amostragem para revisão manual e cálculo de
+concordância (kappa de Cohen).</p>
+<h3 id="entradas--saídas-1">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>LabelingStage</code> em <code>src/pipelines/labeling.py</code>.</li>
+<li><strong>Entrada obrigatória</strong>: <code>paths.data.tweets_clean</code> (saída da etapa 2).</li>
+<li><strong>Saídas</strong>:
+<ul>
+<li><code>data/interim/tweets_labeled/</code> — particionado por usuário, com colunas de
+sentimento/emoção por tweet;</li>
+<li><code>paths.data.user_labels</code> (parquet único) — um rótulo por usuário;</li>
+<li>amostra estratificada para revisão manual
+(<code>consensus.manual_review_file</code>), se não vazia;</li>
+<li><code>reports/metrics/labeling_quality.json</code> — distribuição de classes,
+concordância com revisão manual, <code>concordancia_media_fontes</code>, contagem de
+usuários rotulados.</li>
+</ul>
+</li>
+</ul>
+<h3 id="implementação-passo-a-passo-1">Implementação (passo a passo)</h3>
+<p><strong>Nível tweet — <code>_label_tweets</code>:</strong></p>
+<ol>
+<li>Mesmo padrão de retomada da etapa 2: <code>list_collected_users</code> compara
+<code>tweets_clean</code> (disponível) com <code>tweets_labeled</code> (já processado);
+<code>select_pending_users</code> calcula os pendentes.</li>
+<li><code>_build_labelers(config)</code> instancia <code>SentimentLabeler</code> (se
+<code>labeling.sentiment.enabled</code>) e <code>EmotionLabeler</code> (se
+<code>labeling.emotion.enabled</code>).</li>
+<li>Para cada usuário pendente (<code>_label_and_write_user</code>): lê a partição,
+aplica <code>sentiment_labeler.label_frame</code> (valida contra
+<code>LabeledTweetSchema</code>), depois <code>emotion_labeler.label_frame</code> dentro de um
+<code>try/except</code> — falha na rotulação de emoções é degradação aceitável
+(logada como warning, sem interromper a etapa); falha no classificador de
+sentimento não é (propaga erro).</li>
+</ol>
+<p><strong><code>SentimentLabeler</code></strong> (<code>src/labeling/sentiment.py</code>): <code>transformers.pipeline</code>
+sobre <code>text_normalized</code>, com <code>model_name</code> primário e <code>fallback_model_name</code>
+em cascata; rótulos abaixo de <code>min_confidence</code> viram <code>indefinido</code> — decisão
+explícita para não propagar incerteza como certeza na supervisão fraca a
+jusante. Produz <code>sentiment</code>, <code>sentiment_score</code> e <code>sentiment_polarity</code>. É
+explicitamente um classificador determinístico, não um LLM generativo —
+sentimento é constructo auxiliar (feature/triagem), nunca proxy do risco
+clínico.</p>
+<p><strong><code>EmotionLabeler</code></strong> (<code>src/labeling/emotion.py</code>): pipeline multi-rótulo
+(<code>pysentimiento/robertuito-emotion-analysis</code>) sobre <code>text_normalized</code>, gera
+uma coluna <code>emotion_&lt;nome&gt;</code> por emoção em <code>target_emotions</code>.</p>
+<p><strong>Nível usuário — supervisão fraca (após <code>_label_tweets</code>):</strong></p>
+<ol start="4">
+<li><code>read_partitioned(tweets_labeled, ...)</code> concatena todo o acumulado — essa
+parte <strong>não é decomponível por usuário</strong>, pois depende de estatísticas
+populacionais (balanceamento, amostragem estratificada).</li>
+<li><code>assign_user_labels</code> (<code>src/labeling/weak_supervision.py</code>):
+<ul>
+<li><code>compute_lexical_evidence</code>: para cada léxico, calcula por usuário a
+<strong>proporção</strong> de tweets com ≥1 termo (<code>&lt;lexico&gt;_ratio</code>, não contagem
+bruta, para não deixar um tweet repetitivo pesar como vários) e
+<code>negative_ratio</code> (fração de tweets com <code>sentiment == negativo</code>);</li>
+<li><code>compute_temporal_persistence</code>: usa léxicos de risco (<code>death</code>,
+<code>hopelessness</code>, <code>loneliness</code>) para marcar em quantas janelas de
+<code>temporal_persistence.window_days</code> (30 dias) o usuário mostrou sinal;
+<code>has_persistence</code> exige <code>windows_with_signal &gt;= 2</code> e <code>span_days &gt;= 60</code>
+— distingue transtorno persistente de reação pontual a um evento;</li>
+<li><code>_collect_candidate_labels</code>: deriva rótulo candidato do
+<code>source_group</code> mais frequente entre os tweets do usuário. <strong>Nota</strong>:
+<code>source_group</code> só é preenchido nos tweets-semente da busca inicial — os
+tweets do histórico retrospectivo (maior parte do dataset após a etapa
+2) têm <code>source_group</code> nulo, então o voto <code>collection_group</code> raramente
+dispara sobre o conjunto rotulado. Isso é consistente com o achado
+conhecido de que <code>concordancia_media_fontes</code> tende a ficar
+artificialmente próxima de <code>1.0</code> (as fontes que efetivamente votam —
+léxica e temporal — tendem a concordar entre si);</li>
+<li><code>label_from_lexical_evidence</code>: aplica limiares de
+<code>labeling.yaml:user_labeling.lexical_thresholds</code> — primeiro
+<code>ideacao_suicida</code> (por <code>death_ratio</code>/<code>death_hits</code>), depois <code>depressao</code>
+(exige <code>negative_ratio</code> mínimo <strong>e</strong> <code>hopelessness_ratio</code> ou
+<code>loneliness_ratio</code>), senão <code>controle</code>;</li>
+<li><code>_collect_votes</code> + <code>resolve_consensus</code>: soma pesos por classe (empates
+resolvidos por <code>CLASS_PRECEDENCE</code>: <code>ideacao_suicida</code> &gt; <code>depressao</code> &gt;
+<code>controle</code>); concordância abaixo de <code>consensus.min_agreement</code> (0.60) →
+<code>indefinido</code>;</li>
+<li><code>_build_user_record</code>: inclui <code>user_label_multilabel</code> (união de todas as
+classes de risco votadas, preservando coocorrência).</li>
+</ul>
+</li>
+<li><code>load_manual_labels</code> / <code>apply_manual_labels</code>
+(<code>src/labeling/validation.py</code>) — revisão humana sempre vence sobre a
+supervisão fraca.</li>
+<li><code>compute_agreement</code> — concordância simples e <strong>kappa de Cohen</strong> entre
+<code>user_label</code> e <code>manual_label</code>.</li>
+<li><code>sample_for_manual_review</code> — amostragem <strong>estratificada por classe</strong> de
+tamanho <code>manual_review_sample_size</code> (200), semente fixa; garante
+representação mínima de <code>ideacao_suicida</code> (tipicamente minoritária).</li>
+<li><code>drop_undecided</code> — remove usuários <code>indefinido</code> se
+<code>consensus.drop_undecided: true</code> (padrão).</li>
+<li>Validação final (<code>UserLabelSchema</code>), <code>check_class_balance</code> (compara com
+<code>collection.sampling.max_class_imbalance_ratio</code>), gravação do parquet e
+de <code>labeling_quality.json</code>.</li>
+</ol>
+<h3 id="configuração-relevante-1">Configuração relevante</h3>
+<ul>
+<li><code>configs/labeling.yaml</code>:
+<ul>
+<li><code>sentiment</code>: <code>cardiffnlp/twitter-xlm-roberta-base-sentiment</code> (+
+fallback <code>pysentimiento/bertweet-pt-sentiment</code>), <code>min_confidence: 0.50</code>;</li>
+<li><code>emotion</code>: <code>pysentimiento/robertuito-emotion-analysis</code>;</li>
+<li><code>user_labeling.sources</code>: pesos <code>collection_group=0.40</code>,
+<code>lexical_evidence=0.35</code>, <code>temporal_persistence=0.25</code>;</li>
+<li><code>user_labeling.lexical_thresholds</code>, <code>temporal_persistence</code>,
+<code>consensus</code> (<code>min_agreement=0.60</code>, <code>drop_undecided=true</code>,
+<code>manual_review_sample_size=200</code>);</li>
+<li><code>class_precedence: [ideacao_suicida, depressao, controle]</code>;</li>
+<li><code>control_is_screening_negative_only: true</code> — documenta que <code>controle</code>
+significa "sem sinais detectados na amostra coletada", não ausência
+clínica confirmada.</li>
+</ul>
+</li>
+<li><code>configs/lexicons/</code>: <code>death.txt</code> (23 termos), <code>hopelessness.txt</code> (24),
+<code>loneliness.txt</code> (21), <code>isolation.txt</code> (21), <code>negative_emotion.txt</code> (44),
+<code>insomnia.txt</code> (23) — carregados via <code>utils.lexicons.load_lexicons</code>.</li>
+</ul>
+<h3 id="design-notável-1">Design notável</h3>
+<ul>
+<li>Dois ritmos de execução: rotulação por tweet é incremental/retomável;
+rotulação por usuário roda uma única vez sobre o acumulado (depende de
+estatísticas globais).</li>
+<li>Tratamento de erro assimétrico: emoção é recuperável, sentimento não.</li>
+<li>Kappa de Cohen, amostragem estratificada e revisão manual são parte formal
+do pipeline, com resultado persistido em <code>labeling_quality.json</code>.</li>
+<li><strong>Limitação conhecida</strong>: o voto <code>collection_group</code> depende de
+<code>source_group</code>, normalmente nulo nos tweets de histórico — reduz, na
+prática, a supervisão fraca às fontes léxica e temporal, o que deve ser
+considerado ao interpretar <code>concordancia_media_fontes</code>.</li>
+</ul>
+<hr>
+<h2 id="etapa-4--escores-psicológicos">Etapa 4 — Escores Psicológicos</h2>
+<h3 id="objetivo-2">Objetivo</h3>
+<p>Extrair, para cada usuário, um vetor psicológico de cinco dimensões
+(<code>tristeza</code>, <code>isolamento</code>, <code>esperanca</code>, <code>ansiedade</code>, <code>risco_suicida</code>, todas em
+<code>[0,1]</code>) a partir de lotes de tweets, usando um LLM local via Ollama. É a
+etapa mais lenta do pipeline e a única que depende de um serviço externo ao
+processo — por isso é opcional e falha de forma controlada (o pipeline segue
+sem o grupo <code>psychological</code>, com aviso explícito).</p>
+<h3 id="entradas--saídas-2">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>PsychologicalStage</code> em <code>src/pipelines/psychological.py</code>.</li>
+<li><strong>Entrada obrigatória</strong>: <code>paths.data.tweets_clean</code>. A origem real
+(<code>_resolve_source_dir</code>) prefere <code>tweets_labeled</code> se já existir (tem
+sentimento), senão cai para <code>tweets_clean</code>.</li>
+<li><strong>Saída</strong>: partições por usuário em <code>paths.data.psychological_scores</code>
+(<code>schemas.tweets.PsychologicalScoreSchema</code>: uma linha por lote de tweets
+processado, com <code>user_id</code>, <code>batch_index</code>, <code>n_tweets</code>, <code>window_start/end</code>,
+as 5 dimensões, <code>model</code> e <code>prompt_version</code>).</li>
+</ul>
+<h3 id="implementação-passo-a-passo-2">Implementação (passo a passo)</h3>
+<ol>
+<li>Se <code>config.llm.psychological_features.enabled</code> for <code>false</code>, a etapa é
+pulada.</li>
+<li>Seleção de usuários pendentes (mesmo padrão de <code>select_pending_users</code> das
+etapas anteriores) — processamento incremental por usuário.</li>
+<li><code>_create_extractor</code>: instancia <code>PsychologicalExtractor(config.llm)</code> e
+<code>client.ensure_model(...)</code> verifica se o modelo está disponível no
+servidor Ollama; se indisponível (ou pacote <code>ollama</code> ausente), a etapa é
+<strong>pulada com aviso</strong>, sem derrubar o pipeline.</li>
+<li><code>_extract_pending_users</code>: para cada usuário pendente, lê a partição,
+chama <code>extractor.extract_frame</code>, valida contra
+<code>PsychologicalScoreSchema</code> e grava imediatamente
+(<code>write_user_partition</code>) — a gravação por usuário evita perder horas de
+inferência já feita em caso de interrupção.</li>
+<li><code>PsychologicalExtractor.extract_frame</code> (<code>src/labeling/llm.py</code>): ordena
+tweets por <code>[user_id, created_at]</code>, particiona por usuário, quebra em
+lotes de <code>batch_size_tweets</code> (20) preservando <code>batch_index</code> e
+<code>window_start</code>/<code>window_end</code>; dispara as chamadas ao LLM <strong>em paralelo</strong>
+com <code>ThreadPoolExecutor(max_workers=max_concurrency)</code> (4) — justificado
+por ser I/O bloqueante de rede ao Ollama, não trabalho de CPU.</li>
+<li><code>extract_batch</code> (por thread): monta o prompt
+(<code>build_psychological_prompt</code>), chama <code>client.generate(...)</code> com
+<code>temperature=0.0</code>, <code>seed=42</code>, <code>num_ctx=8192</code>; valida a resposta como
+<code>PsychologicalVector</code> (Pydantic, <code>Field(ge=0, le=1)</code>); em falha de
+validação, <strong>repete</strong> até <code>max_repairs</code> vezes (2, logo até 3 tentativas);
+se todas falharem, descarta o lote — nunca "inventa" um valor.</li>
+<li><code>build_psychological_prompt</code> (<code>src/labeling/prompt.py</code>): se
+<code>safeguards.require_pii_scrubbed_input</code> (<code>true</code>), verifica com
+<code>contains_pii</code> que o texto já foi higienizado pelo preprocessing; calcula
+orçamento de caracteres (<code>max_prompt_chars=24000</code>) e trunca pelo fim se
+necessário; retorna um <code>Prompt</code> com <code>version</code> (<code>1.0.0</code>) gravada em cada
+score para rastreabilidade.</li>
+<li><code>OllamaClient.generate</code>: cache por hash do payload
+(<code>{system, user, version, model, temperature, seed}</code>) em
+<code>data/interim/llm_cache</code> — só a primeira tentativa usa cache, reparos
+forçam nova chamada; retry com backoff exponencial
+(<code>retry_attempts=3</code>, <code>backoff_seconds=5</code>, dobrando a cada falha);
+<code>extract_json_object</code> extrai o JSON da resposta, tolerante a texto
+explicativo ao redor.</li>
+<li>Consolidação final: relista <code>processed_users</code>; se vazio, retorna skip;
+senão retorna <code>n_lotes</code>, <code>n_usuarios</code>, <code>usuarios_processados_nesta_execucao</code>,
+<code>modelo</code> e <code>versao_prompt</code>.</li>
+</ol>
+<h3 id="configuração-relevante-configsllmyaml">Configuração relevante (<code>configs/llm.yaml</code>)</h3>
+<ul>
+<li><code>ollama</code>: <code>host</code>, <code>timeout_seconds=120</code>, <code>keep_alive=5m</code>,
+<code>auto_pull=false</code> (falha explícita em vez de baixar GBs silenciosamente),
+<code>retry_attempts=3</code>, <code>backoff_seconds=5</code>.</li>
+<li><code>psychological_features</code>: <code>enabled=true</code>, <code>model=llama3.2</code>,
+<code>temperature=0.0</code>, <code>seed=42</code>, <code>num_ctx=8192</code>, <code>max_repairs=2</code>,
+<code>batch_size_tweets=20</code>, <code>max_concurrency=4</code> (dimensionado para GPU
+V100S-32GB), <code>cache.enabled=true</code>.</li>
+<li><code>prompts.version="1.0.0"</code>, templates pt-BR com regras (JSON apenas,
+<code>esperanca</code> é dimensão positiva, não inferir diagnóstico clínico, usar 0.5
+se conteúdo insuficiente).</li>
+<li><code>safeguards</code>: <code>require_pii_scrubbed_input=true</code>, <code>max_prompt_chars=24000</code>,
+<code>log_prompt_content=false</code> (nunca loga conteúdo do prompt, só
+hash/metadados — LGPD arts. 11 e 33; processamento 100% local via Ollama
+pela mesma razão).</li>
+</ul>
+<h3 id="design-notável-2">Design notável</h3>
+<ul>
+<li>Processamento incremental por usuário com retomada e gravação imediata.</li>
+<li>Cache por hash de prompt: reexecução não reprocessa o mesmo
+prompt/modelo/parâmetros.</li>
+<li>Saída validada com reparo limitado (Pydantic + <code>max_repairs</code>), preferindo
+descartar a inventar valor.</li>
+<li>Concorrência via threads (I/O-bound), não processos.</li>
+<li>Falha graciosa: indisponibilidade do LLM não derruba o pipeline, apenas o
+grupo <code>psychological</code> fica ausente da matriz de features (mensurável pelo
+Ablation Study).</li>
+<li>Privacidade por design: execução local, PII removida antes do envio,
+prompt nunca logado.</li>
+</ul>
+<hr>
+<h2 id="etapa-5--embeddings-semânticos">Etapa 5 — Embeddings Semânticos</h2>
+<h3 id="objetivo-3">Objetivo</h3>
+<p>Gerar vetores densos por tweet usando um encoder Transformer, e persistir
+esses vetores brutos em disco, separando essa etapa (cara em GPU) da
+agregação em nível de usuário — os vetores podem ser reaproveitados em todas
+as agregações e modelos subsequentes sem recodificar milhões de textos a cada
+experimento.</p>
+<h3 id="entradas--saídas-3">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>EmbeddingStage</code> em <code>src/pipelines/embedding.py</code>.</li>
+<li><strong>Entrada obrigatória</strong>: <code>paths.data.tweets_clean</code> (origem real prefere
+<code>tweets_labeled</code> se disponível).</li>
+<li><strong>Saída final por modelo/encoder</strong>: <code>&lt;embeddings_dir&gt;/&lt;nome&gt;.npy</code>
+(matriz <code>(n_tweets, dim)</code>) + <code>&lt;embeddings_dir&gt;/&lt;nome&gt;_index.parquet</code>
+(coluna <code>user_id</code> por linha, mesma ordem), via <code>save_embeddings</code>.</li>
+<li><strong>Cache intermediário por usuário</strong>:
+<code>&lt;embeddings_dir&gt;/_cache/&lt;nome&gt;/&lt;user_id&gt;.npy</code> (+ arquivo <code>.owner</code>).</li>
+</ul>
+<h3 id="implementação-passo-a-passo-3">Implementação (passo a passo)</h3>
+<ol>
+<li>Se <code>config.features.semantic.enabled</code> for <code>false</code>, a etapa é pulada.</li>
+<li><code>_resolve_requested_models</code>: por padrão só o <code>primary_model</code>
+(<code>neuralmind/bert-base-portuguese-cased</code>) roda; com <code>--all-encoders</code>,
+adiciona os demais <code>config.models</code> (<code>bertimbau</code>, <code>roberta</code>, <code>gemma</code>,
+<code>llama</code>).</li>
+<li>Para cada encoder (<code>_process_encoder</code>): lista usuários já codificados no
+cache, calcula pendentes via <code>select_pending_users</code> — processamento
+incremental por usuário, igual à etapa 4 — codifica os pendentes
+(<code>_encode_pending_users</code>) e consolida o cache
+(<code>_consolidate_cache</code>).</li>
+<li><code>_encode_pending_users</code>: instancia <code>EmbeddingEncoder(model_name, config)</code>
+(falha isolada por encoder, sem derrubar o pipeline); para cada usuário
+pendente, <code>_encode_and_cache_user</code> lê a partição, chama <code>encoder.encode</code>,
+grava <code>.npy</code> no cache e um arquivo <code>.owner</code> com o <code>user_id</code>
+pseudonimizado real (o nome do arquivo é a chave de partição bruta da
+coleta, que pode diferir do pseudônimo usado no resto do pipeline).</li>
+<li><code>EmbeddingEncoder.encode</code> (<code>src/features/semantic.py</code>): carrega
+<code>AutoTokenizer</code>/<code>AutoModel</code> sob demanda (senão <code>MissingDependencyError</code>);
+move para <code>self.device</code> (<code>resolve_device("auto")</code>); <code>model.eval()</code> e
+<code>torch.set_grad_enabled(False)</code> (só <em>forward pass</em>); processa em lotes de
+<code>batch_size</code> (128, dimensionado para GPU V100S-32GB); tokeniza com
+<code>padding</code>, <code>truncation</code>, <code>max_length=128</code>; <strong>pooling</strong> <code>mean</code> (padrão,
+respeita a máscara de atenção) ou <code>cls</code>; se <code>normalize</code> (<code>true</code>), aplica
+normalização L2 (necessária para similaridade por cosseno).</li>
+<li><code>_consolidate_cache</code>: empilha todos os <code>.npy</code> cacheados, resolve o
+<code>user_id</code> real via <code>.owner</code> (ou relê a partição de origem, gravando o
+<code>.owner</code> para consolidações futuras), expande a lista de owners por
+linha de embedding, chama <code>save_embeddings</code>.</li>
+<li>Retorno: <code>n_tweets_codificados</code>, <code>modelos</code>, <code>dimensoes</code> por modelo,
+<code>written</code>. Se nenhum encoder produziu saída, retorna skip.</li>
+</ol>
+<p>Funções auxiliares no mesmo módulo, usadas pela <strong>etapa 6</strong> (não pela etapa
+5 em si): <code>aggregate_embeddings</code> (agrega por usuário conforme
+<code>user_aggregations: [mean, std]</code> — média captura o "centro semântico" do
+perfil, desvio captura a dispersão temática) e <code>build_semantic_features</code>
+(codifica e agrega em um só passo, para comparações pontuais). A redução
+dimensional (PCA, <code>n_components=64</code>, ajustado só no split de treino) é
+aplicada depois, dentro do pipeline de features/modelagem.</p>
+<h3 id="configuração-relevante-configsfeaturesyaml-seção-semantic">Configuração relevante (<code>configs/features.yaml</code>, seção <code>semantic</code>)</h3>
+<ul>
+<li><code>enabled: true</code>, <code>primary_model: neuralmind/bert-base-portuguese-cased</code>.</li>
+<li><code>models</code>: <code>bertimbau</code>, <code>roberta</code> (<code>pucpr/biobertpt-all</code>), <code>gemma</code>
+(<code>embeddinggemma</code>), <code>llama</code> (<code>llama3.2</code>) — só com <code>--all-encoders</code>.</li>
+<li><code>pooling: mean</code>, <code>max_length: 128</code>, <code>batch_size: 128</code>, <code>device: auto</code>,
+<code>normalize: true</code>.</li>
+<li><code>user_aggregations: [mean, std]</code>.</li>
+<li><code>reduction: {method: pca, n_components: 64, random_state: 42}</code>.</li>
+<li><code>groups.semantic: true</code> — chave do Ablation Study em <code>evaluation.yaml</code>.</li>
+</ul>
+<h3 id="design-notável-3">Design notável</h3>
+<ul>
+<li>Cache em dois níveis: por usuário (retomável) e consolidado por modelo.</li>
+<li>Resolução de identidade (<code>owner</code>) desacoplada da chave de cache.</li>
+<li>Múltiplos encoders opcionais: primário sempre roda, os demais só sob
+demanda explícita.</li>
+<li>Falha graciosa por encoder.</li>
+<li>GPU/device automático e lotes maiores (não há gradientes em memória).</li>
+<li>Mean pooling com máscara de atenção + normalização L2, para tornar os
+vetores comparáveis por similaridade de cosseno.</li>
+</ul>
+<hr>
+<h2 id="etapa-6--engenharia-de-features">Etapa 6 — Engenharia de Features</h2>
+<h3 id="objetivo-4">Objetivo</h3>
+<p>Transformar os tweets rotulados em <strong>uma linha de atributos por usuário</strong> (a
+unidade amostral do projeto), reunindo seis grupos de features (linguísticas,
+emocionais, semânticas, temporais, comportamentais e psicológicas) mais
+colunas descritivas de perfil, com imputação de ausentes e junção com o
+rótulo do usuário.</p>
+<h3 id="entradas--saídas-4">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>FeaturesStage</code> em <code>src/pipelines/features.py</code>.</li>
+<li><strong>Entradas obrigatórias</strong>: <code>paths.data.tweets_labeled</code> e
+<code>paths.data.user_labels</code>.</li>
+<li><strong>Entradas opcionais</strong>: <code>paths.data.user_metadata</code> (features de audiência)
+e <code>paths.data.psychological_scores</code> (etapa 4) — se ausentes, os grupos
+correspondentes são apenas logados como omitidos.</li>
+<li><strong>Entrada adicional para o grupo semântico</strong>: embeddings <code>.npy</code> /
+<code>_index.parquet</code> de <code>paths.data.embeddings</code> (etapa 5).</li>
+<li><strong>Saída principal</strong>: <code>paths.data.user_features</code> (parquet, uma linha por
+usuário).</li>
+<li><strong>Saídas auxiliares</strong>: <code>paths.data.user_features_raw</code> (checkpoint
+particionado por usuário, retomável), <code>reports/metrics/features_summary.json</code>
+e o manifesto do dataset.</li>
+</ul>
+<h3 id="implementação-passo-a-passo-4">Implementação (passo a passo)</h3>
+<ol>
+<li>
+<p><strong>Processamento incremental por usuário</strong>
+(<code>_build_pending_user_features</code> → <code>_build_and_write_user_row</code>): calcula
+pendentes, lê tweets/metadados/scores psicológicos por usuário, chama
+<code>build_user_features_raw</code> e grava imediatamente.</p>
+</li>
+<li>
+<p><strong><code>build_user_features_raw</code></strong> (<code>src/features/builder.py</code>), a metade
+<em>decomponível por usuário</em>:</p>
+<ul>
+<li><code>build_profile_columns</code>: <code>n_tweets</code>, <code>active_days</code>, <code>span_days</code>,
+<code>first_tweet_at</code>, <code>last_tweet_at</code>;</li>
+<li>une, condicionalmente por grupo ativo (<code>config.features.groups</code>):
+<code>_join_linguistic_group</code> (<code>features/linguistic.py</code>: razões de léxico,
+comprimento de texto, diversidade lexical — TTR + MTLD, uso de
+pronomes, n-gramas TF-IDF via <code>features/ngrams.py</code>),
+<code>_join_emotional_group</code> (<code>features/emotional.py</code>: distribuição de
+sentimento, confiança, intensidade de emoções),
+<code>_join_temporal_group</code> (<code>features/temporal.py</code>: volume, atividade
+noturna, entropia circadiana, tendência de sentimento, intensificação
+de risco), <code>_join_behavioral_group</code> (<code>features/behavioral.py</code>:
+engajamento, audiência, razões seguidor/seguindo e de respostas),
+<code>_join_semantic_group</code> (agregação dos embeddings da etapa 5) e
+<code>_join_psychological_group</code> (vetor da etapa 4);</li>
+<li><strong>remove as colunas que vazam o rótulo</strong> via
+<code>_drop_label_leaking_columns</code> (ver seção dedicada abaixo);</li>
+<li>promove <code>temp_night_activity_ratio</code> a coluna de perfil (usada nas
+fatias de avaliação da etapa 9);</li>
+<li>filtra usuários abaixo de <code>aggregation.min_tweets_per_user</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Finalização única, sobre a população inteira</strong>
+(<code>_finalize_features</code> → <code>features.builder.finalize_user_features</code>), roda
+uma vez após todos os pendentes serem processados:</p>
+<ul>
+<li>concatena o acumulado de <code>user_features_raw</code> e remove duplicatas de
+<code>user_id</code>;</li>
+<li>trata ausentes (<code>handle_missing_values</code>): normaliza <code>NaN</code> para <code>null</code>,
+cria indicadores binários <code>&lt;coluna&gt;_is_missing</code>, imputa conforme
+<code>aggregation.missing_strategy</code> (<code>median</code> — mediana <strong>global</strong>, com
+<code>fallback 0.0</code> —, <code>zero</code> ou <code>keep_nan</code>);</li>
+<li>une o rótulo do usuário (<code>inner join</code> com <code>user_labels</code>);</li>
+<li>agrega e une os embeddings semânticos (<code>aggregate_embeddings</code>, <code>mean</code>/
+<code>std</code>, <code>left join</code> + <code>fill_null(0.0)</code>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Validação e persistência</strong>:
+<code>schemas.features.validate_feature_matrix(features, allow_nan=False)</code>
+garante <code>user_id</code> presente e único (crítico para não vazar o mesmo
+usuário entre treino e teste na etapa 7), ao menos uma coluna de atributo
+e ausência de valores não finitos; grava o parquet final e
+<code>features_summary.json</code> (hash da matriz, contagem por grupo, resumo de
+ausentes).</p>
+</li>
+</ol>
+<h3 id="prevenção-de-vazamento-de-rótulo">Prevenção de vazamento de rótulo</h3>
+<p>Commit <code>fix(features): prevenir vazamento de rótulos na matriz de recursos</code>,
+endereçando um vazamento direto entre a regra de rotulação por supervisão
+fraca (<code>labeling/weak_supervision.py::label_from_lexical_evidence</code>) e as
+features do classificador:</p>
+<ul>
+<li>em <code>configs/features.yaml</code>, os léxicos <code>death</code>, <code>loneliness</code> e
+<code>hopelessness</code> de <code>linguistic.lexicon_ratios</code> foram comentados (mantidos
+apenas <code>isolation</code>, <code>negative_emotion</code>, <code>insomnia</code>), pois são exatamente
+os léxicos usados como limiar para atribuir o rótulo;</li>
+<li>em <code>src/features/builder.py</code>, a constante
+<code>LABEL_LEAKING_COLUMNS = ("emo_negativo_ratio", "emo_negative_positive_ratio")</code> e a função <code>_drop_label_leaking_columns</code>
+(chamada em <code>build_user_features_raw</code> logo após a junção de todos os
+grupos) removem essas duas colunas — derivadas do mesmo <code>negative_ratio</code>
+usado como limiar da classe <code>depressao</code>, então vazariam a regra mesmo sem
+vir de um léxico explicitamente listado — e logam um <code>warning</code> com o que
+foi removido;</li>
+<li>testes dedicados em <code>tests/test_features.py</code> cobrem remoção e
+idempotência quando as colunas não existem.</li>
+</ul>
+<p>A imputação por mediana em <code>handle_missing_values</code> é documentada como um
+vazamento leve e aceito (estatística sobre a população inteira, não só o
+treino) — a alternativa rigorosa (mover para dentro do <code>Pipeline</code> do
+scikit-learn) está registrada em <code>docs/guides/architecture.md</code>.</p>
+<h3 id="configuração-relevante-configsfeaturesyaml">Configuração relevante (<code>configs/features.yaml</code>)</h3>
+<ul>
+<li><code>groups</code>: liga/desliga cada um dos 6 grupos — unidade do Ablation Study
+(H2–H4).</li>
+<li><code>linguistic.lexicon_ratios</code>, <code>ngrams</code> (TF-IDF, <code>ngram_range [1,2]</code>,
+<code>max_features 3000</code>, <code>min_df 5</code>, <code>max_df 0.85</code>).</li>
+<li><code>emotional.aggregations</code> (<code>mean, std, max, p90</code>).</li>
+<li><code>semantic.primary_model</code>, <code>pooling</code>, <code>user_aggregations</code>, <code>reduction</code>.</li>
+<li><code>temporal.insomnia_window</code>, <code>min_days_for_trend</code>, <code>recent_window_days</code>.</li>
+<li><code>behavioral.log_transform</code>, <code>aggregations</code>.</li>
+<li><code>psychological.dimensions</code>, <code>granularity</code>, <code>batch_size_tweets</code>.</li>
+<li><code>aggregation.min_tweets_per_user</code> (30), <code>add_missing_indicators</code>,
+<code>missing_strategy</code>.</li>
+<li><code>scaling</code> (<code>standard</code>/<code>robust</code>/<code>none</code>, <code>fit_on_train_only: true</code> — o
+escalonamento real é aplicado dentro do <code>Pipeline</code> de treino, não nesta
+etapa).</li>
+</ul>
+<hr>
+<h2 id="etapa-7--divisão-dos-dados">Etapa 7 — Divisão dos Dados</h2>
+<h3 id="objetivo-5">Objetivo</h3>
+<p>Atribuir cada usuário (nunca cada tweet) a uma partição — treino / validação
+/ teste — e a um fold de validação cruzada, garantindo estratificação por
+classe e <strong>zero vazamento de grupo</strong> (nenhum usuário aparece em mais de uma
+partição).</p>
+<h3 id="entradas--saídas-5">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>SplittingStage</code> em <code>src/pipelines/splitting.py</code>.</li>
+<li><strong>Entrada obrigatória</strong>: <code>paths.data.user_features</code> (colunas <code>user_id</code> e
+<code>user_label</code>).</li>
+<li><strong>Saída</strong>: <code>paths.data.splits</code> (parquet com <code>user_id</code>, <code>user_label</code>,
+<code>split</code>, <code>fold</code>).</li>
+<li>Lógica delegada a <code>src/data/splitter.py</code>.</li>
+</ul>
+<h3 id="implementação-passo-a-passo-5">Implementação (passo a passo)</h3>
+<ol>
+<li>
+<p><code>SplittingStage.run</code> lê <code>user_id</code>/<code>user_label</code> e chama
+<code>build_split_table(features, config.general.split, config.general.cross_validation, random_seed)</code>, que encadeia
+<code>create_splits</code> + <code>assign_folds</code>.</p>
+</li>
+<li>
+<p><strong><code>create_splits</code></strong>: valida que a classe menos frequente tem ao menos 3
+usuários (senão <code>InsufficientDataError</code>). Usa
+<code>sklearn.train_test_split</code> <strong>duas vezes</strong>, sempre com <code>stratify=</code> sobre
+<code>user_label</code>:</p>
+<ol>
+<li>separa <code>test</code> do restante (<code>test_size=0.20</code>);</li>
+<li>separa <code>val</code> do restante (recalculando a fração relativa para que
+<code>val_size=0.10</code> continue sendo fração do <strong>total</strong>).</li>
+</ol>
+<p>Chama <code>check_no_group_leakage</code> três vezes (train×test, val×test,
+train×val).</p>
+</li>
+<li>
+<p><strong><code>assign_folds</code></strong>: filtra apenas usuários de desenvolvimento
+(<code>split != "test"</code>) — o teste nunca participa da CV e recebe <code>fold = -1</code>.
+Usa <code>StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)</code> sobre
+os usuários de desenvolvimento.</p>
+</li>
+<li>
+<p>Validação da tabela final contra <code>schemas.users.SplitSchema</code> (pandera,
+<code>strict=True</code>): <code>user_id</code> único e casado com <code>PSEUDONYM_REGEX</code>,
+<code>user_label</code> em <code>VALID_LABELS</code>, <code>split</code> em
+<code>{"train", "val", "test"}</code>, <code>fold &gt;= -1</code>.</p>
+</li>
+<li>
+<p><strong>Reafirmação da verificação de vazamento</strong>: <code>SplittingStage.run</code> chama
+<code>check_no_group_leakage(train_users, test_users)</code> uma segunda vez, de
+forma independente da checagem já feita dentro de <code>create_splits</code> —
+defesa em profundidade sobre a garantia central do projeto.</p>
+</li>
+<li>
+<p>Grava o parquet e retorna estatísticas: distribuição por partição,
+distribuição cruzada <code>split × user_label</code>, número de folds.</p>
+</li>
+</ol>
+<h3 id="configuração-relevante-configsconfigyaml">Configuração relevante (<code>configs/config.yaml</code>)</h3>
+<pre><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span style="color: rgb(209, 154, 102);">split</span><span style="color: rgb(171, 178, 191);">:</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">group_column</span><span style="color: rgb(171, 178, 191);">:</span><span> user_id</span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">stratify_column</span><span style="color: rgb(171, 178, 191);">:</span><span> user_label</span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">test_size</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(209, 154, 102);">0.20</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">val_size</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(209, 154, 102);">0.10</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">shuffle</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(171, 178, 191); font-weight: bold;">true</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span style="display: inline-block;">
+</span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span></span><span style="color: rgb(209, 154, 102);">cross_validation</span><span style="color: rgb(171, 178, 191);">:</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">n_splits</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(209, 154, 102);">5</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">n_repeats</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(209, 154, 102);">1</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">strategy</span><span style="color: rgb(171, 178, 191);">:</span><span> stratified_group_kfold</span></div></pre>
+<p>mais <code>project.random_seed: 42</code>, usado tanto no split quanto nos folds.</p>
+<h3 id="design-notável-4">Design notável</h3>
+<ul>
+<li>Unidade amostral = usuário: a mesma pessoa nunca fica dividida entre
+partições (evitaria que o modelo aprendesse a reconhecer o autor pelo
+estilo em vez do sinal clínico).</li>
+<li>Estratificação dupla (split e folds), importante para a classe minoritária
+<code>ideacao_suicida</code>.</li>
+<li>Vazamento de grupo verificado em quatro pontos (três dentro de
+<code>create_splits</code>, mais uma quarta redundante em <code>SplittingStage.run</code>).</li>
+<li>Teste tocado uma única vez (<code>fold = -1</code>).</li>
+</ul>
+<hr>
+<h2 id="etapa-8--treinamento">Etapa 8 — Treinamento</h2>
+<h3 id="objetivo-6">Objetivo</h3>
+<p>Executar a validação cruzada (estimativa de incerteza e insumo para os
+testes estatísticos da etapa 9) e treinar a versão final de cada modelo
+selecionado sobre o split <code>train</code>, persistindo os artefatos.</p>
+<h3 id="entradas--saídas-6">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>TrainingStage</code> em <code>src/pipelines/training.py</code>.</li>
+<li><strong>Entradas obrigatórias</strong>: <code>data.user_features</code> e <code>data.splits</code>.</li>
+<li><strong>Entradas opcionais</strong>: tweets rotulados (<code>data.tweets_labeled</code>, via
+<code>load_user_texts</code>) para Transformer/LLM; sequências de embeddings por
+tweet (<code>data.embeddings</code>, via <code>load_user_sequences</code>) para a BiLSTM.</li>
+<li><strong>Saídas</strong>: modelos treinados (<code>.joblib</code> + <code>_metadata.json</code>) em
+<code>paths.models.artifacts</code>; <code>reports/metrics/cross_validation.json</code>
+(resumo por modelo); <code>reports/metrics/cv_fold_scores.json</code> (scores por
+fold, usados na etapa 9 para Wilcoxon/Friedman).</li>
+</ul>
+<h3 id="implementação-passo-a-passo-6">Implementação (passo a passo)</h3>
+<ol>
+<li><strong>Carregamento</strong>: <code>development</code> (train + val, split ≠ "test") alimenta a
+validação cruzada; <code>train</code> alimenta o treino final. O split <code>test</code> nunca
+é tocado nesta etapa.</li>
+<li><strong>Textos/sequências</strong>: tweets agrupados por usuário em ordem cronológica;
+embeddings por tweet reagrupados por usuário, usando o encoder primário
+(<code>config.features.semantic.primary_model</code>).</li>
+<li><strong>Instanciação dos modelos</strong> (<code>create_models</code>, Factory Pattern em
+<code>src/models/factory.py</code>): a partir de <code>config.models.select(...)</code>
+(<code>model_params.yaml</code>), respeitando <code>--include-exploratory</code> e <code>--models</code>.</li>
+<li><strong>Validação cruzada</strong> (<code>src/training/cross_validation.py</code>, pulável com
+<code>--skip-cv</code>):
+<ul>
+<li><code>cross_validate_all</code> itera os specs de modelo e chama
+<code>cross_validate_model</code>;</li>
+<li>os <strong>folds vêm da tabela de partições</strong> (coluna <code>fold</code>), não são
+recalculados — garante que todos os modelos vejam os mesmos blocos,
+condição necessária para os testes pareados da etapa 9;</li>
+<li>em cada fold, um modelo é recriado do zero, treinado e avaliado
+(<code>compute_metrics</code>), retornando a métrica principal
+(<code>evaluation.metrics.primary</code>, <code>f1_macro</code>);</li>
+<li><code>_summarize_fold_scores</code> calcula média, desvio-padrão e IC 95% pela
+<strong>distribuição t</strong> (poucos folds — a aproximação normal subestimaria a
+largura);</li>
+<li><code>n_splits = config.general.cross_validation.n_splits</code> (5);</li>
+<li>scores por fold gravados em <code>cv_fold_scores.json</code>, restritos aos
+modelos que completaram o <strong>mesmo número de folds</strong>.</li>
+</ul>
+</li>
+<li><strong>Treinamento final</strong> (<code>src/training/trainer.py</code>): para cada modelo,
+resolve <code>feature_groups</code>, monta o <code>UserDataset</code> de treino, verifica
+disponibilidade de entradas (texto/sequências) e treina + persiste
+(<code>train_model</code> → <code>model.fit(dataset)</code> dentro de <code>log_duration</code>).
+Persistência via <code>models.persistence.save_model</code>: <code>.joblib</code>
+(<code>joblib.dump</code>) + JSON de metadados (versão do projeto, SHA do git,
+ambiente, hash do dataset via <code>hash_dataframe(...)[:16]</code>) — rastreia
+código + ambiente + dados. Se <code>context.tracker</code> (MLflow) estiver
+configurado, cada modelo roda dentro de <code>tracker.run(...)</code>. Falhas de
+treino de um modelo são isoladas — não derrubam a comparação inteira.</li>
+</ol>
+<h3 id="modelos-disponíveis-srcmodels">Modelos disponíveis (<code>src/models/</code>)</h3>
+<ul>
+<li><code>base.py</code> — <code>BaseUserClassifier</code> (ABC: <code>fit</code>, <code>predict_proba</code>, <code>predict</code>,
+<code>check_fitted</code>, <code>validate_dataset</code>, <code>describe</code>) e <code>UserDataset</code>
+(features tabulares + textos + sequências, alinhados por <code>user_id</code>).</li>
+<li><code>factory.py</code> — <code>create_model</code>/<code>create_models</code>; <code>TABULAR_ESTIMATORS</code>
+(<code>dummy</code>, <code>logistic_regression</code>, <code>random_forest</code>, <code>xgboost</code>, <code>lightgbm</code>),
+<code>SEQUENCE_ESTIMATORS</code> (<code>bilstm</code>, <code>lstm</code>, <code>cnn_text</code>), mais <code>transformer</code>,
+<code>llm</code>, <code>hybrid</code>.</li>
+<li><code>traditional.py</code> — <code>TabularClassifier</code>: <code>Pipeline</code> scikit-learn (scaler
+opcional + estimador); escalonamento pulado para modelos de árvore.</li>
+<li><code>deep.py</code> — <code>SequenceClassifier</code> (BiLSTM/LSTM): rede recorrente PyTorch
+sobre a <strong>sequência cronológica de embeddings de tweets</strong> por usuário,
+com pooling mascarado, <code>CrossEntropyLoss</code> ponderada por classe, parada
+antecipada.</li>
+<li><code>transformer.py</code> — <code>TransformerClassifier</code> (BERTimbau/RoBERTa/DeBERTa):
+fine-tuning hierárquico em duas etapas (nível tweet, depois agregação de
+probabilidades por usuário — <code>mean</code>/<code>max</code>/<code>majority</code>).</li>
+<li><code>llm.py</code> — <code>LLMClassifier</code>: classificação via Ollama, zero-shot ou
+few-shot; não é treinado (<code>fit</code> só seleciona exemplos few-shot).</li>
+<li><code>hybrid.py</code> — <code>HybridClassifier</code> (<code>hybrid_xgboost</code>, contribuição
+metodológica principal): <code>ColumnTransformer</code> com PCA+StandardScaler no
+bloco semântico e StandardScaler nos atributos estruturados, alimentando
+um XGBoost — equilibra o desequilíbrio dimensional entre embeddings e
+atributos estruturados.</li>
+</ul>
+<h3 id="configuração-relevante-configsmodel_paramsyaml">Configuração relevante (<code>configs/model_params.yaml</code>)</h3>
+<ul>
+<li><code>baseline</code>: <code>dummy</code> (<code>strategy: stratified</code>) e <code>tfidf_logistic</code> (só
+<code>feature_groups: [linguistic]</code>) — sempre executados, piso de comparação.</li>
+<li><code>traditional</code>: <code>xgboost</code> (escopo <code>comparison</code>) + exploratórios.</li>
+<li><code>deep</code>: <code>bilstm</code> (escopo <code>comparison</code>, <code>epochs=30</code>, <code>patience=5</code>) +
+exploratórios <code>lstm</code>, <code>cnn_text</code>.</li>
+<li><code>transformer</code>: <code>bertimbau</code> (escopo <code>comparison</code>, <code>fp16: true</code>) +
+exploratórios <code>roberta</code>, <code>deberta</code>.</li>
+<li><code>llm</code>: <code>ollama_primary</code> (<code>llama3.2</code>, <code>mode: few_shot</code>) + exploratórios.</li>
+<li><code>hybrid</code>: <code>hybrid_xgboost</code> (escopo <code>comparison</code>),
+<code>feature_groups: [semantic, emotional, temporal, behavioral, psychological, linguistic]</code>.</li>
+<li><code>class_imbalance.strategy: class_weight</code> (SMOTE deliberadamente não usado
+sobre embeddings).</li>
+</ul>
+<hr>
+<h2 id="etapa-9--avaliação">Etapa 9 — Avaliação</h2>
+<h3 id="objetivo-7">Objetivo</h3>
+<p>Avaliar todos os modelos treinados no split <code>test</code> (tocado uma única vez),
+gerar comparações estatísticas entre modelos, rodar o Ablation Study e a
+análise de interpretabilidade, e gravar os relatórios finais. Qualquer
+ajuste feito após observar o resultado no teste invalidaria a estimativa de
+generalização.</p>
+<h3 id="entradas--saídas-7">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>EvaluationStage</code> em <code>src/pipelines/evaluation.py</code>.</li>
+<li><strong>Entradas obrigatórias</strong>: <code>data.user_features</code>, <code>data.splits</code>,
+<code>models.artifacts</code> (etapa 8).</li>
+<li><strong>Entradas opcionais</strong>: textos/sequências (mesma lógica da etapa 8);
+<code>reports/metrics/cv_fold_scores.json</code> (necessário para Wilcoxon/Friedman).</li>
+<li><strong>Saídas</strong>: <code>reports/metrics/evaluation.json</code>,
+<code>reports/tables/model_comparison.csv</code>, <code>reports/evaluation_report.md</code>,
+<code>reports/metrics/predictions.csv</code>, <code>reports/ablation/ablation.json</code> +
+<code>ablation_summary.csv</code>, <code>reports/interpretability/*.csv</code> (permutação,
+importância por grupo, SHAP).</li>
+</ul>
+<h3 id="implementação-passo-a-passo-7">Implementação (passo a passo)</h3>
+<ol>
+<li>Lê <code>features</code>/<code>splits</code>, separa <code>train</code> (usado só no Ablation Study) e
+<code>test</code>. Se <code>test</code> estiver vazio, a etapa é pulada.</li>
+<li><strong>Avaliação por modelo</strong> (<code>_evaluate_models</code>): itera os <code>.joblib</code> em
+<code>models.artifacts</code>, monta o <code>UserDataset</code> de teste restrito aos
+<code>feature_groups</code> do spec do modelo, chama
+<code>Evaluator(config).evaluate(model, dataset, profile=test)</code>. Falhas por
+modelo são isoladas.</li>
+<li><strong><code>Evaluator.evaluate</code></strong> (<code>src/evaluation/evaluator.py</code>), ponto único de
+avaliação para todas as famílias de modelo:
+<ul>
+<li><code>predict_proba</code> → <code>argmax</code>; <code>compute_metrics</code> (accuracy,
+precision/recall/F1 macro e weighted, ROC-AUC OvR, PR-AUC macro, MCC);</li>
+<li><code>compute_per_class_metrics</code>, <code>compute_confusion_matrix</code>;</li>
+<li><strong>Incerteza</strong>: <code>bootstrap_confidence_interval</code> sobre a métrica
+principal (<code>n_bootstrap=1000</code>, IC percentílico 95%);</li>
+<li><strong>Calibração</strong> (se habilitada): Brier score + ECE/MCE por bins
+(<code>src/evaluation/calibration.py</code>);</li>
+<li><strong>Avaliação por fatias</strong> (se habilitada): <code>evaluate_all_slices</code>
+(<code>src/evaluation/slices.py</code>) — fatias <strong>comportamentais</strong> (volume de
+tweets, janela de observação, atividade noturna), não demográficas,
+por minimização de dados/LGPD; alerta quando a lacuna entre a melhor e
+a pior fatia excede <code>max_acceptable_gap</code>;</li>
+<li><code>Evaluator.compare</code> monta a tabela comparativa ordenada pela métrica
+principal.</li>
+</ul>
+</li>
+<li><strong>Testes de significância estatística</strong> (<code>src/evaluation/statistics.py</code>):
+<ul>
+<li><strong>Wilcoxon pareado + Friedman/Nemenyi</strong>: usa os scores por fold da
+etapa 8; com ≥3 modelos, roda Friedman (ranking médio) + diferença
+crítica de Nemenyi; Wilcoxon par a par entre todos os pares, com
+correção de Holm-Bonferroni e tamanho de efeito (delta de Cliff);</li>
+<li><strong>McNemar</strong> (feature do commit "adicionar relatório de comparação par
+a par de McNemar"): compara cada modelo contra o <strong>melhor modelo</strong>, no
+mesmo conjunto de teste; usa teste binomial exato se discordâncias
+&lt; 25, senão qui-quadrado com correção de continuidade de Yates.</li>
+</ul>
+</li>
+<li><strong>Ablation Study</strong> (<code>src/evaluation/ablation.py</code>, pulável com
+<code>--skip-ablation</code>): testa as hipóteses H2/H3/H4, removendo grupos de
+atributos do modelo <code>hybrid_xgboost</code>. Dois modos: <strong>leave-one-out</strong>
+(contribuição marginal) e <strong>only-one</strong> (contribuição absoluta), cada
+configuração repetida <code>n_repeats=5</code> vezes com sementes diferentes.
+Resultado inclui <code>baseline</code>, <code>leave_one_out</code>, <code>only_one</code> e um <code>ranking</code>
+de grupos por contribuição marginal.</li>
+<li><strong>Interpretabilidade</strong> (<code>src/interpretability/</code>): seleciona, entre os
+modelos com <code>pipeline_</code> scikit-learn persistido, o de melhor métrica
+principal. <strong>Importância por permutação</strong>
+(<code>sklearn.inspection.permutation_importance</code>, <code>n_repeats=10</code>,
+<code>scoring=f1_macro</code>, calculada no teste), agregada por grupo — complementa
+o Ablation Study por caminho independente (ablação mede impacto de
+<em>remover</em>; importância mede o quanto o modelo já treinado <em>usa</em>).
+<strong>SHAP</strong> (<code>TreeExplainer</code>/<code>LinearExplainer</code>/<code>KernelExplainer</code> conforme
+config); para o modelo híbrido, explica o espaço <strong>transformado</strong>
+(pós-PCA), renomeando features para evitar leitura equivocada de
+componentes de PCA como atributos originais.</li>
+<li><strong>Geração de relatórios</strong> (<code>src/evaluation/reports.py</code>): JSON, CSV e
+Markdown (<code>evaluation_report.md</code>) com seções de comparação de modelos
+(com IC), melhor modelo, desempenho detalhado por modelo, testes
+estatísticos (Friedman, Wilcoxon+Holm, McNemar), Ablation Study e uma
+seção fixa de <strong>Limitações</strong> (viés de seleção do rótulo <code>controle</code>,
+supervisão fraca, ausência de atributos demográficos, natureza de
+triagem para pesquisa — não diagnóstico clínico).</li>
+</ol>
+<h3 id="configuração-relevante-configsevaluationyaml">Configuração relevante (<code>configs/evaluation.yaml</code>)</h3>
+<ul>
+<li><code>metrics.primary: f1_macro</code>; <code>highlight</code> destaca
+<code>recall_ideacao_suicida</code> e <code>pr_auc_ideacao_suicida</code> (maior custo clínico
+de falso negativo).</li>
+<li><code>uncertainty</code>: bootstrap, <code>n_bootstrap=1000</code>, <code>confidence_level=0.95</code>.</li>
+<li><code>calibration</code>: <code>n_bins=10</code>, Brier score + ECE.</li>
+<li><code>statistics</code>: <code>mcnemar.enabled=true</code>, <code>wilcoxon.enabled=true</code>,
+<code>friedman.enabled=true</code>, <code>alpha=0.05</code>,
+<code>multiple_comparison_correction: holm</code>, <code>effect_size: cliffs_delta</code>.</li>
+<li><code>slices</code>: <code>volume_tweets</code>, <code>janela_observacao</code>, <code>atividade_noturna</code>;
+<code>min_samples_per_slice=20</code>; <code>max_acceptable_gap=0.15</code>.</li>
+<li><code>ablation</code>: <code>base_model: hybrid_xgboost</code>, grupos <code>[linguistic, emotional, semantic, temporal, behavioral, psychological]</code>, <code>mode: leave_one_out</code>,
+<code>include_only_one=true</code>, <code>n_repeats=5</code>.</li>
+<li><code>interpretability.shap</code>: <code>explainer: tree</code>, <code>max_display=25</code>,
+<code>sample_size=500</code>; <code>permutation_importance</code>: <code>n_repeats=10</code>,
+<code>scoring: f1_macro</code>.</li>
+<li><code>regression_thresholds</code>: F1 macro mínimo para <code>hybrid_xgboost</code> (0.70) e
+<code>xgboost</code> (0.65) — usados como <em>gate</em> de CI.</li>
+<li><code>reporting</code>: <code>formats: [json, csv, md]</code>, <code>save_predictions: true</code>,
+<code>generate_model_card: true</code>.</li>
+</ul>
+<hr>
+<h2 id="etapa-10--relatório-final">Etapa 10 — Relatório Final</h2>
+<h3 id="objetivo-8">Objetivo</h3>
+<p>Fechar o pipeline gerando todo o material de comunicação de resultados e de
+documentação de IA responsável: figuras exploratórias, de avaliação e de
+interpretabilidade, além do <strong>Model Card</strong> e do <strong>Datasheet for Datasets</strong>.
+Um modelo sem documentação de uso pretendido, limitações e desempenho por
+subgrupo não deveria ser publicado — muito menos num domínio em que um erro
+tem consequência clínica.</p>
+<h3 id="entradas--saídas-8">Entradas / Saídas</h3>
+<ul>
+<li><strong>Classe</strong>: <code>ReportingStage</code> em <code>src/pipelines/reporting.py</code>.</li>
+<li><strong>Entrada obrigatória</strong>: <code>paths.data.user_features</code>. As figuras de
+avaliação são tratadas como opcionais — a etapa tolera a ausência de
+artefatos de etapas anteriores.</li>
+<li><strong>Entradas opcionais</strong> (lidas conforme disponibilidade):
+<code>data.user_features</code> (distribuição de classes, perfil de atividade,
+projeção de embeddings), <code>data.tweets_labeled</code> + <code>data.user_labels</code>
+(frequência de palavras, n-grams, nuvem de palavras, evolução de
+sentimento, atividade circadiana, rede de similaridade),
+<code>reports/metrics/evaluation.json</code> (métricas, matrizes de confusão,
+calibração, fatias), <code>reports/tables/model_comparison.csv</code>,
+<code>reports/metrics/predictions.csv</code> (curvas ROC/PR),
+<code>reports/interpretability/*.csv</code>, <code>reports/ablation/ablation_summary.csv</code>,
+<code>reports/metrics/labeling_quality.json</code> e <code>features_summary.json</code>
+(usados pelos templates de Model Card/Datasheet).</li>
+<li><strong>Saídas</strong>: figuras em <code>reports/figures/*.png</code> e <code>*.svg</code>,
+<code>reports/model_cards/model_card.md</code>, <code>reports/datasheets/datasheet.md</code>.</li>
+</ul>
+<h3 id="implementação-passo-a-passo-8">Implementação (passo a passo)</h3>
+<ol>
+<li><code>apply_theme(figure_dpi)</code> (<code>src/visualization/theme.py</code>) aplica o tema
+visual global, garantindo paleta e formatação consistentes em todas as
+figuras da execução.</li>
+<li><strong>Figuras exploratórias</strong> (<code>_exploratory_figures</code>): a partir de
+<code>user_features</code> — <code>distribuicao_classes</code>, <code>perfil_atividade</code>,
+<code>projecao_embeddings</code> (UMAP→t-SNE→PCA em cascata conforme
+disponibilidade). Se houver <code>tweets_labeled</code>: <code>frequencia_palavras</code>,
+<code>bigramas</code>, <code>nuvem_palavras</code> (<code>None</code> se <code>wordcloud</code> não instalado),
+<code>evolucao_sentimento</code>, <code>atividade_circadiana</code> (com a janela de insônia
+sombreada), <code>mapa_atividade</code> (heatmap dia×hora) e <code>rede_similaridade</code>
+(grafo de similaridade lexical via TF-IDF + cosseno + <code>networkx</code> —
+substituto de rede de interação real, já que menções são removidas na
+anonimização LGPD).</li>
+<li><strong>Figuras de avaliação</strong> (<code>_evaluation_figures</code>): a partir de
+<code>evaluation.json</code> (ausência = warning + skip, não falha) —
+<code>comparacao_modelos</code> (barras horizontais com IC 95%); por modelo,
+<code>matriz_confusao_&lt;modelo&gt;</code> (normalizada por linha, para não deixar a
+classe majoritária dominar visualmente), <code>calibracao_&lt;modelo&gt;</code> (curva de
+confiabilidade com ECE), <code>fatias_&lt;modelo&gt;</code> (desempenho por subgrupo
+comportamental); <code>curvas_roc</code> e <code>curvas_precisao_revocacao</code> para o
+melhor modelo (via <code>predictions.csv</code>).</li>
+<li><strong>Figuras de interpretabilidade</strong> (<code>_interpretability_figures</code>): varre
+<code>reports/interpretability/</code> por padrões de arquivo, gerando
+<code>importancia_&lt;modelo&gt;</code>, <code>importancia_grupo_&lt;modelo&gt;</code>, <code>shap_&lt;modelo&gt;</code>
+(coloridas por grupo de atributo); se existir
+<code>ablation_summary.csv</code>, gera <code>ablacao</code> (contribuição marginal
+leave-one-out + desempenho isolado por grupo).</li>
+<li>Cada figura passa por <code>_save()</code>, que tolera <code>None</code> (dependência
+ausente/dados insuficientes, logado em debug) e delega a
+<code>visualization.theme.save_figure()</code> (formatos e DPI configurados,
+sempre fechando a figura para não esgotar memória).</li>
+<li><strong>Documentos de IA responsável</strong> (se <code>generate_model_card: true</code>):
+<ul>
+<li><code>build_model_card()</code> (<code>reports_templates/model_card.py</code>), estrutura de
+Mitchell et al. (2019): detalhes do modelo, uso pretendido/fora de
+escopo, dados de treinamento (com qualidade de rotulação e kappa de
+Cohen), métricas agregadas + IC, desempenho por classe (destaque para
+a revocação de "Ideação Suicida"), calibração, desempenho por
+subgrupo comportamental (com nota sobre a impossibilidade de auditoria
+demográfica por minimização de dados LGPD), limitações, considerações
+éticas e recomendações de uso;</li>
+<li><code>build_datasheet()</code> (<code>reports_templates/datasheet.py</code>), estrutura de
+Gebru et al. (2021): motivação, composição, processo de coleta,
+pré-processamento/rotulação, privacidade e base legal LGPD,
+limitações/vieses conhecidos, distribuição (explicitamente <strong>não</strong>
+redistribuído) e manutenção.</li>
+</ul>
+</li>
+<li><code>run()</code> consolida as figuras geradas, loga sucesso/tentativas, registra
+artefatos no tracker de experimentos (se configurado) e retorna o
+resumo.</li>
+</ol>
+<h3 id="configuração-relevante-configsevaluationyaml-bloco-reporting">Configuração relevante (<code>configs/evaluation.yaml</code>, bloco <code>reporting</code>)</h3>
+<pre><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span style="color: rgb(209, 154, 102);">reporting</span><span style="color: rgb(171, 178, 191);">:</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">formats</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(171, 178, 191);">[</span><span>json</span><span style="color: rgb(171, 178, 191);">,</span><span> csv</span><span style="color: rgb(171, 178, 191);">,</span><span> md</span><span style="color: rgb(171, 178, 191);">]</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">figure_formats</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(171, 178, 191);">[</span><span>png</span><span style="color: rgb(171, 178, 191);">,</span><span> svg</span><span style="color: rgb(171, 178, 191);">]</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">figure_dpi</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(209, 154, 102);">300</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">save_predictions</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(171, 178, 191); font-weight: bold;">true</span><span></span></div><div style="color: rgb(171, 178, 191); text-shadow: rgba(0, 0, 0, 0.3) 0px 1px;"><span>  </span><span style="color: rgb(209, 154, 102);">generate_model_card</span><span style="color: rgb(171, 178, 191);">:</span><span> </span><span style="color: rgb(171, 178, 191); font-weight: bold;">true</span></div></pre>
+<p>também consome <code>evaluation.metrics.primary</code> (escolha do melhor modelo),
+<code>evaluation.uncertainty.confidence_level</code> (IC exibido no Model Card) e
+<code>features.temporal.insomnia_window</code> (janela sombreada na figura de
+atividade circadiana). Caminhos de saída vêm de <code>ReportPaths</code>
+(<code>src/config/paths.py</code>).</p>
+<h3 id="design-notável-5">Design notável</h3>
+<ul>
+<li>Tolerância a dependências ausentes: funções de figura retornam <code>None</code>
+(em vez de lançar exceção) quando falta um pacote opcional (<code>wordcloud</code>,
+<code>umap-learn</code>, <code>networkx</code>) ou dado insuficiente, permitindo que a etapa
+complete mesmo com etapas anteriores parcialmente executadas.</li>
+<li>Tema visual único e ordinal (<code>CLASS_COLORS</code> segue a ordem de severidade
+<code>controle</code> → <code>depressao</code> → <code>ideacao_suicida</code>, distinguível em escala de
+cinza e sob deuteranopia/protanopia).</li>
+<li>PNG + SVG por padrão (inserção rápida vs. diagramação vetorial final).</li>
+<li>Rede de similaridade (TF-IDF/cosseno) em vez de rede de interação real —
+decisão explícita de privacidade, já que menções são removidas na
+anonimização LGPD.</li>
+<li>Ausência de auditoria demográfica é declarada como limitação, não
+contornada: o projeto não coleta atributos sensíveis por minimização de
+dados, e o Model Card documenta essa lacuna como decisão consciente.</li>
+</ul>
