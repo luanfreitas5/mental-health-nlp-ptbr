@@ -346,6 +346,13 @@ class SentimentSection(_Section):
     label_mapping: dict[str, str]
     min_confidence: float = Field(ge=0.0, le=1.0, default=0.5)
     cache_predictions: bool = True
+    # fp16 só acelera em Tensor Cores de GPU CUDA; fora disso é ignorado (com
+    # aviso). quantize aplica quantização dinâmica int8 às camadas lineares
+    # e só faz sentido em CPU — as duas flags são mutuamente exclusivas na
+    # prática (fp16 para GPU, quantize para CPU) e reduzem o tempo de
+    # inferência às custas de uma leve perda de precisão numérica.
+    fp16: bool = False
+    quantize: bool = False
 
 
 class EmotionSection(_Section):
@@ -356,6 +363,8 @@ class EmotionSection(_Section):
     batch_size: int = Field(gt=0, default=32)
     max_length: int = Field(gt=0, default=128)
     target_emotions: list[str]
+    fp16: bool = False
+    quantize: bool = False
 
 
 class LabelSourceSection(_Section):

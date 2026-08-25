@@ -34,6 +34,12 @@ sentiment:
   # Abaixo deste score o tweet vira `indefinido` e não conta na agregação.
   min_confidence: 0.50
   cache_predictions: true
+  # fp16 usa Tensor Cores na V100S-32GB e reduz o tempo de inferência; é
+  # ignorado (com aviso) fora de GPU CUDA, então é seguro deixar ligado aqui.
+  # quantize (int8 dinâmico) é o equivalente para execução em CPU — as duas
+  # flags nunca se aplicam ao mesmo tempo no mesmo processo.
+  fp16: true
+  quantize: false
 
 # --- Emoções finas por tweet (opcional, encoder multi-rótulo) ---------------
 emotion:
@@ -49,6 +55,8 @@ emotion:
     - alegria
     - nojo
     - surpresa
+  fp16: true
+  quantize: false
 
 # --- Rotulação do usuário (supervisão fraca) --------------------------------
 user_labeling:

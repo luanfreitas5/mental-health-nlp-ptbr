@@ -23,7 +23,12 @@ from config.logging import get_logger
 from config.settings import EmotionSection
 from constants.columns import EMOTION_PREFIX, TEXT_NORMALIZED
 from exceptions.model import ModelError
-from labeling.sentiment import _import_transformers
+from labeling.sentiment import (
+    _apply_dynamic_quantization,
+    _import_torch,
+    _import_transformers,
+    _resolve_fp16,
+)
 from utils.progress import build_progress
 from utils.validation import require_columns
 
@@ -67,6 +72,13 @@ class EmotionLabeler:
             return self._pipeline
 
         transformers = _import_transformers()
+
+        use_fp16 = _resolve_fp16(self.config.fp16, self.device, self.config.model_name)
+        pipeline_kwargs: dict[str, Any] = {}
+        if use_fp16:
+            torch = _import_torch()
+            pipeline_kwargs["torch_dtype"] = torch.float16
+
         try:
             self._pipeline = transformers.pipeline(
                 task="text-classification",
@@ -75,13 +87,23 @@ class EmotionLabeler:
                 truncation=True,
                 max_length=self.config.max_length,
                 top_k=None,
+                **pipeline_kwargs,
             )
         except (OSError, ValueError) as error:
             raise ModelError(
                 f"Não foi possível carregar o modelo de emoções '{self.config.model_name}': {error}"
             ) from error
 
-        logger.info("Encoder de emoções carregado: %s.", self.config.model_name)
+        if self.config.quantize:
+            _apply_dynamic_quantization(self._pipeline, self.device, self.config.model_name)
+
+        logger.info(
+            "Encoder de emoções carregado: %s (device=%s, fp16=%s, quantize=%s).",
+            self.config.model_name,
+            self.device,
+            use_fp16,
+            self.config.quantize and self.device != "cuda",
+        )
         return self._pipeline
 
     def _translate(self, label: str) -> str:

@@ -61,6 +61,57 @@ def _import_transformers() -> Any:
     return transformers
 
 
+def _import_torch() -> Any:
+    """Importa ``torch`` sob demanda, com erro explicativo se ausente."""
+    try:
+        import torch  # pyright: ignore[reportMissingImports]
+    except ImportError as error:
+        raise MissingDependencyError(
+            "PyTorch não está instalado. Rode 'make install-llm' para instalar os "
+            "extras de LLM (PyTorch + Transformers)."
+        ) from error
+    return torch
+
+
+def _resolve_fp16(requested: bool, device: str, model_name: str) -> bool:
+    """Decide se a inferência deve usar precisão mista (fp16).
+
+    Mesma lógica de :meth:`models.transformer.TransformerClassifier._resolve_fp16`:
+    fp16 só acelera em Tensor Cores de GPU CUDA, então a flag é ignorada (com
+    aviso) fora de ``cuda`` em vez de gerar um erro.
+    """
+    if requested and device != "cuda":
+        logger.warning(
+            "fp16 solicitado para '%s', mas o dispositivo é '%s': inferindo em precisão total.",
+            model_name,
+            device,
+        )
+        return False
+    return requested
+
+
+def _apply_dynamic_quantization(pipeline: Any, device: str, model_name: str) -> None:
+    """Aplica quantização dinâmica int8 às camadas lineares do modelo.
+
+    A quantização dinâmica do PyTorch (backend fbgemm/qnnpack) só é suportada
+    em CPU; em GPU CUDA ela é ignorada (com aviso) porque fp16 já cobre o
+    mesmo objetivo — reduzir o tempo de inferência — nesse dispositivo.
+    """
+    if device == "cuda":
+        logger.warning(
+            "Quantização dinâmica solicitada para '%s', mas o dispositivo é 'cuda': "
+            "ignorada (use fp16 para acelerar em GPU).",
+            model_name,
+        )
+        return
+
+    torch = _import_torch()
+    pipeline.model = torch.quantization.quantize_dynamic(
+        pipeline.model, {torch.nn.Linear}, dtype=torch.qint8
+    )
+    logger.info("Quantização dinâmica int8 aplicada a '%s'.", model_name)
+
+
 class SentimentLabeler:
     """Rotulador de sentimento baseado em encoder Transformer.
 
@@ -92,6 +143,12 @@ class SentimentLabeler:
         if self.config.fallback_model_name:
             candidates.append(self.config.fallback_model_name)
 
+        use_fp16 = _resolve_fp16(self.config.fp16, self.device, self.config.model_name)
+        pipeline_kwargs: dict[str, Any] = {}
+        if use_fp16:
+            torch = _import_torch()
+            pipeline_kwargs["torch_dtype"] = torch.float16
+
         errors: list[str] = []
         for model_name in candidates:
             try:
@@ -103,6 +160,7 @@ class SentimentLabeler:
                     truncation=True,
                     max_length=self.config.max_length,
                     top_k=None,
+                    **pipeline_kwargs,
                 )
             except (OSError, ValueError) as error:
                 errors.append(f"{model_name}: {error}")
@@ -110,7 +168,15 @@ class SentimentLabeler:
                 continue
 
             self._model_name = model_name
-            logger.info("Encoder de sentimento carregado: %s (device=%s).", model_name, self.device)
+            if self.config.quantize:
+                _apply_dynamic_quantization(self._pipeline, self.device, model_name)
+            logger.info(
+                "Encoder de sentimento carregado: %s (device=%s, fp16=%s, quantize=%s).",
+                model_name,
+                self.device,
+                use_fp16,
+                self.config.quantize and self.device != "cuda",
+            )
             return self._pipeline
 
         raise ModelError(

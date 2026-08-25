@@ -215,6 +215,16 @@ clínico.
 (`pysentimiento/robertuito-emotion-analysis`) sobre `text_normalized`, gera
 uma coluna `emotion_<nome>` por emoção em `target_emotions`.
 
+Os dois carregam o modelo com `torch_dtype=torch.float16` quando
+`fp16: true` (Tensor Cores, só em GPU CUDA — ignorado com aviso fora dela,
+mesma lógica de `models.transformer.TransformerClassifier._resolve_fp16`) ou
+aplicam quantização dinâmica int8 (`torch.quantization.quantize_dynamic`)
+quando `quantize: true` (só em CPU, também ignorada com aviso em CUDA). As
+duas flags reduzem o tempo de inferência dos dois classificadores Transformer
+às custas de uma leve perda de precisão numérica nos scores — por isso
+`min_confidence` continua sendo o filtro de qualidade, não a precisão bruta
+do modelo.
+
 **Nível usuário — supervisão fraca (após `_label_tweets`):**
 
 4. `read_partitioned(tweets_labeled, ...)` concatena todo o acumulado — essa
@@ -268,8 +278,10 @@ uma coluna `emotion_<nome>` por emoção em `target_emotions`.
 
 - `configs/labeling.yaml`:
   - `sentiment`: `cardiffnlp/twitter-xlm-roberta-base-sentiment` (+
-    fallback `pysentimiento/bertweet-pt-sentiment`), `min_confidence: 0.50`;
-  - `emotion`: `pysentimiento/robertuito-emotion-analysis`;
+    fallback `pysentimiento/bertweet-pt-sentiment`), `min_confidence: 0.50`,
+    `fp16: true` (GPU), `quantize: false`;
+  - `emotion`: `pysentimiento/robertuito-emotion-analysis`, `fp16: true`,
+    `quantize: false`;
   - `user_labeling.sources`: pesos `collection_group=0.40`,
     `lexical_evidence=0.35`, `temporal_persistence=0.25`;
   - `user_labeling.lexical_thresholds`, `temporal_persistence`,

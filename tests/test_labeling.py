@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import polars as pl
 import pytest
 
-from config.settings import UserLabelingSection
+from config.settings import EmotionSection, SentimentSection, UserLabelingSection
 from constants.labels import UserLabel
 from exceptions.model import LLMResponseError
+from labeling.emotion import EmotionLabeler
 from labeling.llm import PsychologicalVector, UserClassification, extract_json_object
 from labeling.prompt import build_psychological_prompt, format_tweets
+from labeling.sentiment import SentimentLabeler, _apply_dynamic_quantization, _resolve_fp16
 from labeling.validation import (
     apply_manual_labels,
     compute_agreement,
@@ -29,6 +34,36 @@ from labeling.weak_supervision import (
     label_from_lexical_evidence,
     resolve_consensus,
 )
+
+
+def _fake_transformers_module(pipeline_fn: Any) -> types.ModuleType:
+    """Cria um módulo ``transformers`` falso cujo ``pipeline`` é ``pipeline_fn``."""
+    module = types.ModuleType("transformers")
+    module.pipeline = pipeline_fn  # type: ignore[attr-defined]
+    return module
+
+
+def _fake_torch_module() -> tuple[types.ModuleType, list[dict[str, Any]]]:
+    """Cria um módulo ``torch`` falso, com CUDA sempre disponível.
+
+    Retorna também a lista de chamadas a ``quantize_dynamic``, para as
+    asserções de :class:`TestQuantizacaoDinamica` e
+    :class:`TestCarregamentoComPrecisaoReduzida`.
+    """
+    module = types.ModuleType("torch")
+    module.float16 = "float16-sentinel"  # type: ignore[attr-defined]
+    module.qint8 = "qint8-sentinel"  # type: ignore[attr-defined]
+    module.cuda = SimpleNamespace(is_available=lambda: True)  # type: ignore[attr-defined]
+    module.nn = SimpleNamespace(Linear=object())  # type: ignore[attr-defined]
+
+    quantize_calls: list[dict[str, Any]] = []
+
+    def quantize_dynamic(model: Any, layers: Any, dtype: Any) -> str:
+        quantize_calls.append({"model": model, "layers": layers, "dtype": dtype})
+        return f"quantized({model})"
+
+    module.quantization = SimpleNamespace(quantize_dynamic=quantize_dynamic)  # type: ignore[attr-defined]
+    return module, quantize_calls
 
 
 @pytest.fixture
@@ -301,6 +336,169 @@ class TestPrompts:
 
         with pytest.raises(LLMError, match="PII"):
             build_psychological_prompt(["meu email é a@b.com"], config.llm)
+
+
+class TestResolucaoDeFp16:
+    """``_resolve_fp16`` decide se a inferência usa precisão mista."""
+
+    def test_e_ignorado_fora_de_cuda(self, caplog: pytest.LogCaptureFixture) -> None:
+        """fp16 só acelera em Tensor Cores CUDA; em CPU ele é desativado com aviso."""
+        with caplog.at_level("WARNING"):
+            assert _resolve_fp16(True, "cpu", "modelo-x") is False
+        assert "modelo-x" in caplog.text
+
+    def test_e_mantido_em_cuda(self) -> None:
+        """Em GPU CUDA, a preferência do usuário é respeitada."""
+        assert _resolve_fp16(True, "cuda", "modelo-x") is True
+
+    def test_desativado_nao_gera_aviso(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Sem solicitação de fp16, nada precisa ser avisado."""
+        with caplog.at_level("WARNING"):
+            assert _resolve_fp16(False, "cpu", "modelo-x") is False
+        assert caplog.text == ""
+
+
+class TestQuantizacaoDinamica:
+    """``_apply_dynamic_quantization`` aplica int8 dinâmico só em CPU."""
+
+    def test_e_ignorada_em_cuda(self) -> None:
+        """Quantização dinâmica não é suportada em CUDA; fp16 cobre esse caso."""
+        pipeline = SimpleNamespace(model="modelo-original")
+        _apply_dynamic_quantization(pipeline, "cuda", "modelo-x")
+        assert pipeline.model == "modelo-original"
+
+    def test_substitui_o_modelo_em_cpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Em CPU, ``pipeline.model`` passa a apontar para a versão quantizada."""
+        fake_torch, calls = _fake_torch_module()
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        pipeline = SimpleNamespace(model="modelo-original")
+
+        _apply_dynamic_quantization(pipeline, "cpu", "modelo-x")
+
+        assert pipeline.model == "quantized(modelo-original)"
+        assert calls == [
+            {
+                "model": "modelo-original",
+                "layers": {fake_torch.nn.Linear},
+                "dtype": fake_torch.qint8,
+            }
+        ]
+
+
+class TestCarregamentoComPrecisaoReduzida:
+    """``SentimentLabeler``/``EmotionLabeler`` repassam fp16/quantize ao pipeline."""
+
+    def test_sentiment_passa_torch_dtype_quando_fp16_habilitado(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fp16 habilitado em GPU deve virar ``torch_dtype=torch.float16``."""
+        fake_torch, _ = _fake_torch_module()
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_pipeline(**kwargs: Any) -> SimpleNamespace:
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(model="modelo-carregado")
+
+        monkeypatch.setitem(sys.modules, "transformers", _fake_transformers_module(fake_pipeline))
+
+        config = SentimentSection(
+            model_name="fake/sentiment", label_mapping={}, device="cuda", fp16=True
+        )
+        labeler = SentimentLabeler(config)
+
+        labeler._load()
+
+        assert captured_kwargs["torch_dtype"] == fake_torch.float16
+
+    def test_sentiment_nao_passa_torch_dtype_quando_fp16_desabilitado(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sem fp16, nenhum ``torch_dtype`` é repassado ao pipeline."""
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_pipeline(**kwargs: Any) -> SimpleNamespace:
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(model="modelo-carregado")
+
+        monkeypatch.setitem(sys.modules, "transformers", _fake_transformers_module(fake_pipeline))
+
+        config = SentimentSection(
+            model_name="fake/sentiment", label_mapping={}, device="cpu", fp16=False
+        )
+        labeler = SentimentLabeler(config)
+
+        labeler._load()
+
+        assert "torch_dtype" not in captured_kwargs
+
+    def test_sentiment_aplica_quantizacao_quando_configurado(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """quantize habilitado em CPU quantiza o modelo carregado pelo pipeline."""
+        fake_torch, calls = _fake_torch_module()
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        monkeypatch.setitem(
+            sys.modules,
+            "transformers",
+            _fake_transformers_module(lambda **_: SimpleNamespace(model="modelo-original")),
+        )
+
+        config = SentimentSection(
+            model_name="fake/sentiment", label_mapping={}, device="cpu", quantize=True
+        )
+        labeler = SentimentLabeler(config)
+
+        pipeline = labeler._load()
+
+        assert pipeline.model == "quantized(modelo-original)"
+        assert len(calls) == 1
+
+    def test_emotion_passa_torch_dtype_quando_fp16_habilitado(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """O mesmo contrato de fp16 vale para o classificador de emoções."""
+        fake_torch, _ = _fake_torch_module()
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_pipeline(**kwargs: Any) -> SimpleNamespace:
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(model="modelo-carregado")
+
+        monkeypatch.setitem(sys.modules, "transformers", _fake_transformers_module(fake_pipeline))
+
+        config = EmotionSection(model_name="fake/emotion", target_emotions=["tristeza"], fp16=True)
+        labeler = EmotionLabeler(config)
+
+        labeler._load()
+
+        assert captured_kwargs["torch_dtype"] == fake_torch.float16
+
+    def test_emotion_aplica_quantizacao_quando_configurado(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """quantize habilitado quantiza o modelo de emoções quando o device é CPU."""
+        fake_torch, calls = _fake_torch_module()
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        monkeypatch.setitem(
+            sys.modules,
+            "transformers",
+            _fake_transformers_module(lambda **_: SimpleNamespace(model="modelo-original")),
+        )
+
+        config = EmotionSection(
+            model_name="fake/emotion", target_emotions=["tristeza"], quantize=True
+        )
+        labeler = EmotionLabeler(config)
+        labeler.device = "cpu"
+
+        pipeline = labeler._load()
+
+        assert pipeline.model == "quantized(modelo-original)"
+        assert len(calls) == 1
 
     def test_prompt_valido_carrega_versao(self, config) -> None:
         """A versão do prompt acompanha o resultado, para rastreabilidade."""
