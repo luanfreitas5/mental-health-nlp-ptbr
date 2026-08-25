@@ -2226,6 +2226,15 @@ clínico.</p>
 <p><strong><code>EmotionLabeler</code></strong> (<code>src/labeling/emotion.py</code>): pipeline multi-rótulo
 (<code>pysentimiento/robertuito-emotion-analysis</code>) sobre <code>text_normalized</code>, gera
 uma coluna <code>emotion_&lt;nome&gt;</code> por emoção em <code>target_emotions</code>.</p>
+<p>Os dois carregam o modelo com <code>torch_dtype=torch.float16</code> quando
+<code>fp16: true</code> (Tensor Cores, só em GPU CUDA — ignorado com aviso fora dela,
+mesma lógica de <code>models.transformer.TransformerClassifier._resolve_fp16</code>) ou
+aplicam quantização dinâmica int8 (<code>torch.quantization.quantize_dynamic</code>)
+quando <code>quantize: true</code> (só em CPU, também ignorada com aviso em CUDA). As
+duas flags reduzem o tempo de inferência dos dois classificadores Transformer
+às custas de uma leve perda de precisão numérica nos scores — por isso
+<code>min_confidence</code> continua sendo o filtro de qualidade, não a precisão bruta
+do modelo.</p>
 <p><strong>Nível usuário — supervisão fraca (após <code>_label_tweets</code>):</strong></p>
 <ol>
 <li><code>read_partitioned(tweets_labeled, ...)</code> concatena todo o acumulado — essa
@@ -2279,8 +2288,10 @@ uma coluna <code>emotion_&lt;nome&gt;</code> por emoção em <code>target_emotio
 <ul>
 <li><code>configs/labeling.yaml</code>:</li>
 <li><code>sentiment</code>: <code>cardiffnlp/twitter-xlm-roberta-base-sentiment</code> (+
-    fallback <code>pysentimiento/bertweet-pt-sentiment</code>), <code>min_confidence: 0.50</code>;</li>
-<li><code>emotion</code>: <code>pysentimiento/robertuito-emotion-analysis</code>;</li>
+    fallback <code>pysentimiento/bertweet-pt-sentiment</code>), <code>min_confidence: 0.50</code>,
+    <code>fp16: true</code> (GPU), <code>quantize: false</code>;</li>
+<li><code>emotion</code>: <code>pysentimiento/robertuito-emotion-analysis</code>, <code>fp16: true</code>,
+    <code>quantize: false</code>;</li>
 <li><code>user_labeling.sources</code>: pesos <code>collection_group=0.40</code>,
     <code>lexical_evidence=0.35</code>, <code>temporal_persistence=0.25</code>;</li>
 <li><code>user_labeling.lexical_thresholds</code>, <code>temporal_persistence</code>,
