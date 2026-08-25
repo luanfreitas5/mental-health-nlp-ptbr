@@ -39,10 +39,37 @@ from constants.columns import (
     USER_LABEL_MULTILABEL,
 )
 from constants.labels import CLASS_PRECEDENCE, Sentiment, UserLabel
+from preprocessing.text import _strip_accents_expr
 from utils.lexicons import load_lexicons
 from utils.validation import require_columns
 
 logger = get_logger(__name__)
+
+#: Coluna transitória (nunca persistida: cai fora do ``group_by().agg()``)
+#: com o texto normalizado para casar com os padrões de léxico.
+_NORMALIZED_TEXT_COLUMN = "_text_normalized_lex"
+
+
+def _normalized_text_expr(column: str) -> pl.Expr:
+    """Normaliza uma coluna de texto como :meth:`utils.lexicons.Lexicon.contains`.
+
+    Minúsculas + remoção de acentos, vetorizado (reaproveita
+    :func:`preprocessing.text._strip_accents_expr`) — mesma normalização que
+    :func:`utils.lexicons.normalize_term` aplica por texto, para que
+    ``str.contains``/``str.count_matches`` casem exatamente como a versão
+    escalar usada em ``features/linguistic.py`` e ``features/temporal.py``.
+
+    Parameters
+    ----------
+    column : str
+        Nome da coluna de texto a normalizar.
+
+    Returns
+    -------
+    pl.Expr
+        Expressão do texto em minúsculas e sem acentos.
+    """
+    return _strip_accents_expr(pl.col(column).str.to_lowercase())
 
 
 @dataclass(frozen=True)
@@ -83,6 +110,15 @@ def compute_lexical_evidence(tweets: pl.DataFrame) -> pl.DataFrame:
         Uma linha por usuário, com ``<lexico>_ratio``, ``negative_ratio``,
         ``death_hits`` e ``n_tweets``.
 
+    Notes
+    -----
+    Vetorizado: os léxicos são padrões de expressão regular aplicados com
+    ``str.count_matches`` sobre a coluna inteira em uma passada (motor Rust
+    do polars), em vez de uma chamada Python (``map_elements``) por tweet —
+    a mesma diferença que motivou vetorizar ``preprocessing.text.clean_text``.
+    ``_has_{nome}`` é derivado de ``_hits_{nome} > 0`` em vez de uma segunda
+    varredura por regex, o que reduz pela metade as buscas por léxico.
+
     Examples
     --------
     >>> compute_lexical_evidence(tweets)  # doctest: +SKIP
@@ -90,24 +126,24 @@ def compute_lexical_evidence(tweets: pl.DataFrame) -> pl.DataFrame:
     require_columns(tweets, [USER_ID, TEXT_CLEAN], context="evidência léxica")
 
     lexicons = load_lexicons()
-    frame = tweets
-
-    for name, lexicon in lexicons.items():
-        frame = frame.with_columns(
-            pl.col(TEXT_CLEAN)
-            .map_elements(lexicon.contains, return_dtype=pl.Boolean)
-            .alias(f"_has_{name}"),
-            pl.col(TEXT_CLEAN)
-            .map_elements(lexicon.count, return_dtype=pl.Int64)
-            .alias(f"_hits_{name}"),
-        )
+    frame = tweets.with_columns(
+        _normalized_text_expr(TEXT_CLEAN).alias(_NORMALIZED_TEXT_COLUMN)
+    ).with_columns(
+        [
+            pl.col(_NORMALIZED_TEXT_COLUMN)
+            .str.count_matches(lexicon.pattern.pattern, literal=False)
+            .alias(f"_hits_{name}")
+            for name, lexicon in lexicons.items()
+        ]
+    )
 
     aggregations: list[pl.Expr] = [pl.len().alias("n_tweets")]
     for name in lexicons:
+        hits = pl.col(f"_hits_{name}")
         aggregations.extend(
             (
-                pl.col(f"_has_{name}").mean().alias(f"{name}_ratio"),
-                pl.col(f"_hits_{name}").sum().alias(f"{name}_hits"),
+                (hits > 0).mean().alias(f"{name}_ratio"),
+                hits.sum().alias(f"{name}_hits"),
             )
         )
 
@@ -143,6 +179,13 @@ def compute_temporal_persistence(
         Uma linha por usuário, com ``windows_with_signal``, ``span_days`` e
         ``has_persistence``.
 
+    Notes
+    -----
+    Vetorizado: o texto é normalizado uma única vez e cada léxico de risco
+    aplica ``str.contains`` sobre essa coluna (motor Rust do polars), em vez
+    de uma chamada Python (``map_elements``) por tweet — ver
+    :func:`compute_lexical_evidence`.
+
     Examples
     --------
     >>> compute_temporal_persistence(tweets, config.labeling.user_labeling)  # doctest: +SKIP
@@ -161,16 +204,13 @@ def compute_temporal_persistence(
         )
 
     settings = config.temporal_persistence
+    frame = tweets.with_columns(_normalized_text_expr(TEXT_CLEAN).alias(_NORMALIZED_TEXT_COLUMN))
+
     has_risk = pl.lit(False)
-    frame = tweets
     for name in risk_names:
-        column = f"_risk_{name}"
-        frame = frame.with_columns(
-            pl.col(TEXT_CLEAN)
-            .map_elements(lexicons[name].contains, return_dtype=pl.Boolean)
-            .alias(column)
+        has_risk = has_risk | pl.col(_NORMALIZED_TEXT_COLUMN).str.contains(
+            lexicons[name].pattern.pattern, literal=False
         )
-        has_risk = has_risk | pl.col(column)
 
     return (
         frame.with_columns(has_risk.alias("_has_risk"))

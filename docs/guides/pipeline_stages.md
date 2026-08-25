@@ -240,6 +240,14 @@ do modelo.
      `temporal_persistence.window_days` (30 dias) o usuário mostrou sinal;
      `has_persistence` exige `windows_with_signal >= 2` e `span_days >= 60`
      — distingue transtorno persistente de reação pontual a um evento;
+     as duas funções acima são vetorizadas: o texto é normalizado uma vez
+     (minúsculas + remoção de acentos, `str.to_lowercase` +
+     `preprocessing.text._strip_accents_expr`) e os léxicos casam com
+     `str.contains`/`str.count_matches` sobre a coluna inteira (motor Rust do
+     polars), em vez de uma chamada Python (`map_elements`) por tweet — os
+     padrões de `constants.regex.build_term_pattern` usam `\b` em vez de
+     *lookaround* justamente para serem reaproveitados sem alteração pelo
+     motor Rust, que não suporta *lookaround*;
    - `_collect_candidate_labels`: deriva rótulo candidato do
      `source_group` mais frequente entre os tweets do usuário. **Nota**:
      `source_group` só é preenchido nos tweets-semente da busca inicial — os

@@ -108,8 +108,15 @@ def build_term_pattern(terms: list[str]) -> re.Pattern[str]:
 
     Os termos são ordenados do mais longo para o mais curto, de modo que a
     expressão mais específica vença (``"não quero mais viver"`` antes de
-    ``"viver"``), e delimitados por fronteira de palavra para não casar
-    dentro de outra palavra.
+    ``"viver"``), e delimitados por fronteira de palavra (``\\b``) para não
+    casar dentro de outra palavra. ``\\b`` (e não os *lookarounds*
+    ``(?<!\\w)``/``(?!\\w)``, equivalentes para termos que começam e terminam
+    em caractere de palavra — o caso de todo termo de léxico deste projeto) é
+    a escolha deliberada: o motor regex Rust do polars não suporta
+    *lookaround*, e o ``.pattern`` deste objeto é reaproveitado sem alteração
+    em :func:`labeling.weak_supervision._normalized_text_expr`-based matching
+    vetorizado (``str.contains``/``str.count_matches``), evitando manter duas
+    versões do mesmo padrão.
 
     Parameters
     ----------
@@ -137,4 +144,4 @@ def build_term_pattern(terms: list[str]) -> re.Pattern[str]:
 
     ordered = sorted(set(terms), key=len, reverse=True)
     alternatives = "|".join(re.escape(term) for term in ordered)
-    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", flags=re.IGNORECASE | re.UNICODE)
+    return re.compile(rf"\b(?:{alternatives})\b", flags=re.IGNORECASE | re.UNICODE)
