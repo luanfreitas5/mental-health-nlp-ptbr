@@ -2546,15 +2546,19 @@ rótulo do usuário.</p>
 <li><code>build_profile_columns</code>: <code>n_tweets</code>, <code>active_days</code>, <code>span_days</code>,
      <code>first_tweet_at</code>, <code>last_tweet_at</code>;</li>
 <li>une, condicionalmente por grupo ativo (<code>config.features.groups</code>):
-     <code>_join_linguistic_group</code> (<code>features/linguistic.py</code>: razões de léxico,
-     comprimento de texto, diversidade lexical — TTR + MTLD, uso de
-     pronomes, n-gramas TF-IDF via <code>features/ngrams.py</code>),
-     <code>_join_emotional_group</code> (<code>features/emotional.py</code>: distribuição de
-     sentimento, confiança, intensidade de emoções),
-     <code>_join_temporal_group</code> (<code>features/temporal.py</code>: volume, atividade
-     noturna, entropia circadiana, tendência de sentimento, intensificação
-     de risco), <code>_join_behavioral_group</code> (<code>features/behavioral.py</code>:
-     engajamento, audiência, razões seguidor/seguindo e de respostas),
+     <code>_build_independent_groups</code> roda <strong>em paralelo</strong> (uma thread por grupo,
+     via <code>ThreadPoolExecutor</code>) os grupos linguístico, temporal e
+     comportamental — nenhum consome a saída de outro, só leem <code>tweets</code>
+     (e, no comportamental, <code>metadata</code>): linguístico (<code>features/linguistic.py</code>:
+     razões de léxico, comprimento de texto, diversidade lexical — TTR +
+     MTLD, uso de pronomes lematizados em lote via spaCy/<code>nlp.pipe</code>,
+     n-gramas TF-IDF via <code>features/ngrams.py</code>), temporal (<code>features/temporal.py</code>:
+     volume, atividade noturna, entropia circadiana, tendência de
+     sentimento, intensificação de risco) e comportamental
+     (<code>features/behavioral.py</code>: engajamento, audiência, razões
+     seguidor/seguindo e de respostas). Em seguida, sequencialmente (dependem
+     de artefatos externos): <code>_join_emotional_group</code> (<code>features/emotional.py</code>:
+     distribuição de sentimento, confiança, intensidade de emoções),
      <code>_join_semantic_group</code> (agregação dos embeddings da etapa 5) e
      <code>_join_psychological_group</code> (vetor da etapa 4);</li>
 <li><strong>remove as colunas que vazam o rótulo</strong> via
