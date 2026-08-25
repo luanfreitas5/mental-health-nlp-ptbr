@@ -2363,10 +2363,12 @@ sem o grupo <code>psychological</code>, com aviso explícito).</p>
    inferência já feita em caso de interrupção.</li>
 <li><code>PsychologicalExtractor.extract_frame</code> (<code>src/labeling/llm.py</code>): ordena
    tweets por <code>[user_id, created_at]</code>, particiona por usuário, quebra em
-   lotes de <code>batch_size_tweets</code> (20) preservando <code>batch_index</code> e
+   lotes de <code>batch_size_tweets</code> (40) preservando <code>batch_index</code> e
    <code>window_start</code>/<code>window_end</code>; dispara as chamadas ao LLM <strong>em paralelo</strong>
-   com <code>ThreadPoolExecutor(max_workers=max_concurrency)</code> (4) — justificado
-   por ser I/O bloqueante de rede ao Ollama, não trabalho de CPU.</li>
+   com <code>ThreadPoolExecutor(max_workers=max_concurrency)</code> (8, ponto de
+   partida — meça o teto real da GPU com
+   <code>scripts/benchmark_ollama_concurrency.py</code>) — justificado por ser I/O
+   bloqueante de rede ao Ollama, não trabalho de CPU.</li>
 <li><code>extract_batch</code> (por thread): monta o prompt
    (<code>build_psychological_prompt</code>), chama <code>client.generate(...)</code> com
    <code>temperature=0.0</code>, <code>seed=42</code>, <code>num_ctx=8192</code>; valida a resposta como
@@ -2392,13 +2394,16 @@ sem o grupo <code>psychological</code>, com aviso explícito).</p>
 </ol>
 <h3 id="configuracao-relevante-configsllmyaml">Configuração relevante (<code>configs/llm.yaml</code>)<a class="headerlink" href="#configuracao-relevante-configsllmyaml" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>ollama</code>: <code>host</code>, <code>timeout_seconds=120</code>, <code>keep_alive=5m</code>,
+<li><code>ollama</code>: <code>host</code>, <code>timeout_seconds=120</code>, <code>keep_alive=30m</code> (renovado a cada
+  chamada — evita descarregar o modelo da VRAM entre lotes de usuários),
   <code>auto_pull=false</code> (falha explícita em vez de baixar GBs silenciosamente),
   <code>retry_attempts=3</code>, <code>backoff_seconds=5</code>.</li>
 <li><code>psychological_features</code>: <code>enabled=true</code>, <code>model=llama3.2</code>,
   <code>temperature=0.0</code>, <code>seed=42</code>, <code>num_ctx=8192</code>, <code>max_repairs=2</code>,
-  <code>batch_size_tweets=20</code>, <code>max_concurrency=4</code> (dimensionado para GPU
-  V100S-32GB), <code>cache.enabled=true</code>.</li>
+  <code>batch_size_tweets=40</code>, <code>max_concurrency=8</code> (ponto de partida para a GPU
+  V100S-32GB — requer <code>OLLAMA_NUM_PARALLEL &gt;= max_concurrency</code> no servidor;
+  meça o teto real com <code>scripts/benchmark_ollama_concurrency.py</code> antes de
+  subir mais), <code>cache.enabled=true</code>.</li>
 <li><code>prompts.version="1.0.0"</code>, templates pt-BR com regras (JSON apenas,
   <code>esperanca</code> é dimensão positiva, não inferir diagnóstico clínico, usar 0.5
   se conteúdo insuficiente).</li>
