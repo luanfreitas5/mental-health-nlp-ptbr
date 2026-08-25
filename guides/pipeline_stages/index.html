@@ -2249,7 +2249,15 @@ do modelo.</p>
      <code>hopelessness</code>, <code>loneliness</code>) para marcar em quantas janelas de
      <code>temporal_persistence.window_days</code> (30 dias) o usuário mostrou sinal;
      <code>has_persistence</code> exige <code>windows_with_signal &gt;= 2</code> e <code>span_days &gt;= 60</code>
-     — distingue transtorno persistente de reação pontual a um evento;</li>
+     — distingue transtorno persistente de reação pontual a um evento;
+     as duas funções acima são vetorizadas: o texto é normalizado uma vez
+     (minúsculas + remoção de acentos, <code>str.to_lowercase</code> +
+     <code>preprocessing.text._strip_accents_expr</code>) e os léxicos casam com
+     <code>str.contains</code>/<code>str.count_matches</code> sobre a coluna inteira (motor Rust do
+     polars), em vez de uma chamada Python (<code>map_elements</code>) por tweet — os
+     padrões de <code>constants.regex.build_term_pattern</code> usam <code>\b</code> em vez de
+     <em>lookaround</em> justamente para serem reaproveitados sem alteração pelo
+     motor Rust, que não suporta <em>lookaround</em>;</li>
 <li><code>_collect_candidate_labels</code>: deriva rótulo candidato do
      <code>source_group</code> mais frequente entre os tweets do usuário. <strong>Nota</strong>:
      <code>source_group</code> só é preenchido nos tweets-semente da busca inicial — os
