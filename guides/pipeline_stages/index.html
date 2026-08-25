@@ -2075,8 +2075,12 @@ longitudinal.</p>
    <code>--limit-users</code>.</p>
 </li>
 <li>
-<p><strong>Processamento por usuário</strong> (<code>for user_id in track(pending, ...)</code>), um de
-   cada vez, sem materializar mais de um histórico simultaneamente:</p>
+<p><strong>Processamento por usuário</strong> (<code>_preprocess_user</code>, distribuído via
+   <code>utils.parallel.run_user_pool</code>), em processos paralelos — CPU-bound
+   (deduplicação, normalização, limpeza de texto) e cada usuário é
+   independente dos demais, então o laço roda num <code>ProcessPoolExecutor</code>
+   (<code>--workers</code> controla o grau de paralelismo; padrão: todos os núcleos
+   detectados) em vez de sequencial:</p>
 </li>
 <li><code>read_user_history(user_histories, user_id)</code> lê só o <code>.parquet</code> daquele
      usuário, deduplica por <code>tweet_id</code> e ordena por <code>created_at</code>;</li>
@@ -2086,9 +2090,9 @@ longitudinal.</p>
      abaixo);</li>
 <li>
 <p><code>write_user_partition(user_clean, tweets_clean, user_id)</code> grava o
-     resultado imediatamente — inclusive quando fica vazio (ex.: usuário
-     inteiramente filtrado por ser conta automatizada), preservando o registro
-     de que o usuário já foi tratado.</p>
+     resultado imediatamente, dentro do próprio processo worker — inclusive
+     quando fica vazio (ex.: usuário inteiramente filtrado por ser conta
+     automatizada), preservando o registro de que o usuário já foi tratado.</p>
 </li>
 <li>
 <p><strong><code>run_preprocessing</code></strong> (orquestrador central):</p>
@@ -2536,8 +2540,15 @@ rótulo do usuário.</p>
 <li>
 <p><strong>Processamento incremental por usuário</strong>
    (<code>_build_pending_user_features</code> → <code>_build_and_write_user_row</code>): calcula
-   pendentes, lê tweets/metadados/scores psicológicos por usuário, chama
-   <code>build_user_features_raw</code> e grava imediatamente.</p>
+   pendentes e distribui os usuários entre processos via
+   <code>utils.parallel.run_user_pool</code> (<code>--workers</code> controla o grau de
+   paralelismo) — CPU-bound (tokenização, agregações) e cada usuário é
+   independente dos demais. A metadata de audiência é particionada por
+   usuário uma única vez no processo principal (<code>partition_by</code>), e só a
+   fatia (uma linha, ou nenhuma) do usuário em questão é enviada ao worker
+   correspondente. Dentro de cada worker: lê tweets/metadados/scores
+   psicológicos do usuário, chama <code>build_user_features_raw</code> e grava
+   imediatamente.</p>
 </li>
 <li>
 <p><strong><code>build_user_features_raw</code></strong> (<code>src/features/builder.py</code>), a metade
