@@ -66,6 +66,10 @@ semantic:
   batch_size: 128
   device: auto
   normalize: true                # L2 — necessário para similaridade de cossenos
+  # fp32 | fp16 | bf16 — autocast no forward pass do encoder (Tensor Cores).
+  # Só acelera em GPU CUDA; fora disso é ignorado (com aviso). bf16 é
+  # preferível em GPUs Ampere+ (V100S não suporta — usar fp16 nesse caso).
+  precision: fp32
   # Agregação tweet -> usuário: a média captura o "centro semântico" do perfil;
   # o desvio captura a dispersão temática (perfis depressivos tendem a ser mais
   # concentrados). Ambos entram no modelo híbrido.

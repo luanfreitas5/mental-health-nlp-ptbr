@@ -478,6 +478,14 @@ class SemanticSection(_Section):
     batch_size: int = Field(gt=0, default=32)
     device: Literal["auto", "cpu", "cuda"] = "auto"
     normalize: bool = True
+    # Autocast (fp16/bf16) só acelera em Tensor Cores de GPU CUDA; fora disso
+    # é ignorado (com aviso) e o encoder roda em fp32. bf16 tem o mesmo
+    # alcance de expoente do fp32 (sem risco de overflow em ativações), mas
+    # exige GPU Ampere+; fp16 roda em qualquer CUDA, mas satura em ativações
+    # muito grandes. Extração de embedding é só forward pass — sem
+    # otimizador/gradiente — então o ganho vira tempo por lote menor e
+    # memória livre para lotes maiores, sem GradScaler.
+    precision: Literal["fp32", "fp16", "bf16"] = "fp32"
     user_aggregations: list[str]
     reduction: ReductionSection
 

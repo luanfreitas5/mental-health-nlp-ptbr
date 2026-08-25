@@ -95,8 +95,35 @@ class EmbeddingEncoder:
         torch.set_grad_enabled(False)
 
         self._tokenizer, self._model = tokenizer, model
-        logger.info("Encoder semântico carregado: %s (device=%s).", self.model_name, self.device)
+        logger.info(
+            "Encoder semântico carregado: %s (device=%s, precision=%s).",
+            self.model_name,
+            self.device,
+            self.config.precision,
+        )
         return self._tokenizer, self._model
+
+    def _resolve_autocast_dtype(self) -> Any | None:
+        """Decide o dtype de autocast do forward pass.
+
+        Autocast (fp16/bf16) só acelera em Tensor Cores de GPU CUDA; fora
+        disso é ignorado (com aviso) e o encoder roda em fp32.
+        """
+        if self.config.precision == "fp32":
+            return None
+        if self.device != "cuda":
+            logger.warning(
+                "Precisão '%s' solicitada para '%s', mas o dispositivo é '%s': "
+                "codificando em precisão total.",
+                self.config.precision,
+                self.model_name,
+                self.device,
+            )
+            return None
+
+        import torch  # pyright: ignore[reportMissingImports]
+
+        return torch.bfloat16 if self.config.precision == "bf16" else torch.float16
 
     def encode(self, texts: list[str]) -> np.ndarray:
         """Codifica uma lista de textos.
@@ -126,6 +153,7 @@ class EmbeddingEncoder:
         import torch  # pyright: ignore[reportMissingImports]
 
         tokenizer, model = self._load()
+        autocast_dtype = self._resolve_autocast_dtype()
         vectors: list[np.ndarray] = []
 
         with build_progress() as progress:
@@ -142,7 +170,19 @@ class EmbeddingEncoder:
                     return_tensors="pt",
                 ).to(self.device)
 
-                output = model(**encoded).last_hidden_state
+                # Autocast só envolve o forward pass: menos tempo por lote e
+                # memória livre para lotes maiores. O restante (pooling,
+                # normalização) roda em fp32 — `.float()` evita que a perda
+                # de precisão do fp16/bf16 se propague para a similaridade
+                # por cosseno entre embeddings.
+                with torch.amp.autocast(
+                    device_type=self.device,
+                    dtype=autocast_dtype or torch.float16,
+                    enabled=autocast_dtype is not None,
+                ):
+                    output = model(**encoded).last_hidden_state
+                if autocast_dtype is not None:
+                    output = output.float()
 
                 if self.config.pooling == "cls":
                     pooled = output[:, 0, :]

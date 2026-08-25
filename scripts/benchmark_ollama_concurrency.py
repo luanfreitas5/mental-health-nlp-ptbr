@@ -322,8 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "Caminho do JSON de saída (padrão: "
-            "reports/metrics/ollama_concurrency_benchmark.json)."
+            "Caminho do JSON de saída (padrão: reports/metrics/ollama_concurrency_benchmark.json)."
         ),
     )
     parser.add_argument(
