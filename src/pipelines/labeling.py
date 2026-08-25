@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,7 +45,9 @@ class LabelingStage(PipelineStage):
     usuários até atingir o ``batch_size`` dos encoders Transformer antes de
     cada chamada de inferência — rotular usuário a usuário sub-utilizaria a
     GPU sempre que um usuário tivesse menos tweets que o lote configurado
-    (ver :func:`_iter_user_batches`). A escrita em ``tweets_labeled/``
+    (ver :func:`_iter_user_batches`). Dentro de cada lote, sentimento e
+    emoção são independentes e rodam em paralelo, não em sequência (ver
+    :meth:`_label_parallel`). A escrita em ``tweets_labeled/``
     continua por usuário, imediatamente após cada lote ser rotulado,
     retomável entre execuções (ver :func:`data.reader.select_pending_users`)
     e limitável por ``--limit-users``. A rotulação por usuário (supervisão
@@ -228,6 +231,9 @@ class LabelingStage(PipelineStage):
         emotion_labeler: EmotionLabeler | None,
     ) -> pl.DataFrame:
         """Aplica sentimento (ou neutro padrão) e emoções a um usuário, validando o esquema."""
+        if sentiment_labeler is not None and emotion_labeler is not None:
+            return self._label_parallel(user_frame, sentiment_labeler, emotion_labeler)
+
         if sentiment_labeler is not None:
             user_frame = sentiment_labeler.label_frame(user_frame)
         else:
@@ -248,6 +254,71 @@ class LabelingStage(PipelineStage):
                 logger.warning("Rotulação de emoções falhou e será omitida: %s", error)
 
         return user_frame
+
+    def _label_parallel(
+        self,
+        user_frame: pl.DataFrame,
+        sentiment_labeler: SentimentLabeler,
+        emotion_labeler: EmotionLabeler,
+    ) -> pl.DataFrame:
+        """Roda os dois encoders do lote em paralelo, quando ambos estão habilitados.
+
+        Sentimento e emoção são independentes — cada um só lê ``text_normalized``
+        e nenhum consome a saída do outro — mas rodavam em sequência, então o
+        segundo encoder ficava ocioso esperando a inferência do primeiro
+        terminar. Como ``predict()`` faz chamadas ao PyTorch/Transformers, que
+        liberam o GIL durante o cômputo pesado, as duas ``ThreadPoolExecutor``
+        tasks conseguem sobrepor tempo de CPU/GPU de fato, não só I/O. As duas
+        threads compartilham uma única barra ``rich`` (ver o parâmetro
+        ``progress`` de :meth:`SentimentLabeler.predict` e
+        :meth:`EmotionLabeler.predict`): abrir duas barras próprias ao mesmo
+        tempo corromperia o terminal, já que ambas escrevem no mesmo console.
+
+        A falha de emoção continua tratada como complementar (ver
+        :meth:`_label_user_frame`); a de sentimento propaga, pois não há um
+        "neutro" seguro para substituir uma predição que já foi tentada.
+
+        Parameters
+        ----------
+        user_frame : pl.DataFrame
+            Tweets do lote combinado, ainda sem rótulos.
+        sentiment_labeler : SentimentLabeler
+            Rotulador de sentimento, habilitado.
+        emotion_labeler : EmotionLabeler
+            Rotulador de emoções, habilitado.
+
+        Returns
+        -------
+        pl.DataFrame
+            Tweets com as colunas de sentimento e, se a inferência de emoção
+            não falhar, as colunas de emoção.
+        """
+        with build_progress() as progress, ThreadPoolExecutor(max_workers=2) as executor:
+            sentiment_future = executor.submit(
+                sentiment_labeler.label_frame, user_frame, progress=progress
+            )
+            emotion_future = executor.submit(
+                emotion_labeler.label_frame, user_frame, progress=progress
+            )
+
+            sentiment_result = sentiment_future.result()
+            try:
+                emotion_result = emotion_future.result()
+            except (OSError, ValueError) as error:
+                logger.warning("Rotulação de emoções falhou e será omitida: %s", error)
+                emotion_result = None
+
+        validate_frame(
+            sentiment_result, LabeledTweetSchema, context="saída da rotulação de sentimento"
+        )
+
+        if emotion_result is None:
+            return sentiment_result
+
+        new_columns = [
+            column for column in emotion_result.columns if column not in user_frame.columns
+        ]
+        return sentiment_result.with_columns(emotion_result.select(new_columns))
 
     def run(self, context: StageContext) -> dict[str, Any]:
         """Executa a rotulação em dois níveis.

@@ -9,6 +9,7 @@ levava o ``pipeline()`` a rodar lotes bem menores que o configurado.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -85,7 +86,11 @@ class _FakeSentimentLabeler:
     """
 
     def label_frame(
-        self, frame: pl.DataFrame, text_column: str = "text_normalized"
+        self,
+        frame: pl.DataFrame,
+        text_column: str = "text_normalized",
+        *,
+        progress: Any | None = None,
     ) -> pl.DataFrame:
         score = pl.col(text_column).str.len_chars().cast(pl.Float64) / 1000.0
         return frame.with_columns(
@@ -93,6 +98,67 @@ class _FakeSentimentLabeler:
             score.alias("sentiment_score"),
             pl.lit(0.0).alias("sentiment_polarity"),
         )
+
+
+class _SignalingSentimentLabeler:
+    """Rotulador de sentimento falso que sinaliza um :class:`threading.Event` ao rodar.
+
+    Usado com :class:`_BlockingEmotionLabeler` para provar que sentimento e
+    emoção rodam de fato em paralelo (ver ``TestLabelParallel``).
+    """
+
+    def __init__(self, started: threading.Event) -> None:
+        self._started = started
+
+    def label_frame(
+        self,
+        frame: pl.DataFrame,
+        text_column: str = "text_normalized",
+        *,
+        progress: Any | None = None,
+    ) -> pl.DataFrame:
+        self._started.set()
+        return frame.with_columns(
+            pl.lit("neutro").alias("sentiment"),
+            pl.lit(0.0).alias("sentiment_score"),
+            pl.lit(0.0).alias("sentiment_polarity"),
+        )
+
+
+class _BlockingEmotionLabeler:
+    """Rotulador de emoção falso que só retorna após o sentimento sinalizar início.
+
+    Se as duas rotulações rodassem em sequência (sentimento primeiro, emoção
+    depois), este rotulador nunca veria o evento setado antes de si mesmo
+    terminar — o teste travaria até o timeout do ``Event.wait`` estourar,
+    denunciando uma regressão para execução sequencial.
+    """
+
+    def __init__(self, started: threading.Event) -> None:
+        self._started = started
+
+    def label_frame(
+        self,
+        frame: pl.DataFrame,
+        text_column: str = "text_normalized",
+        *,
+        progress: Any | None = None,
+    ) -> pl.DataFrame:
+        assert self._started.wait(timeout=2.0), "emoção não rodou em paralelo com sentimento"
+        return frame.with_columns(pl.lit(0.5).alias("emotion_raiva"))
+
+
+class _FailingEmotionLabeler:
+    """Rotulador de emoção falso que sempre falha, para testar o fallback complementar."""
+
+    def label_frame(
+        self,
+        frame: pl.DataFrame,
+        text_column: str = "text_normalized",
+        *,
+        progress: Any | None = None,
+    ) -> pl.DataFrame:
+        raise OSError("modelo de emoção indisponível")
 
 
 class TestResolveInferenceBatchSize:
@@ -259,3 +325,56 @@ class TestLabelAndWriteBatch:
 
         assert pl.read_parquet(labeled_dir / "u_00000000.parquet").is_empty()
         assert pl.read_parquet(labeled_dir / "u_0000000c.parquet").height == 2
+
+
+class TestLabelParallel:
+    """Testes da execução paralela de sentimento e emoção dentro de um lote."""
+
+    def test_sentimento_e_emocao_rodam_em_paralelo(
+        self, stage: LabelingStage, tmp_path: Path
+    ) -> None:
+        """Com os dois encoders habilitados, um não espera o outro terminar."""
+        clean_dir = tmp_path / "tweets_clean"
+        clean_dir.mkdir()
+        labeled_dir = tmp_path / "tweets_labeled"
+        labeled_dir.mkdir()
+
+        frame = _write_user(clean_dir, "u_0000000a", 2)
+        batch = [("u_0000000a", frame)]
+        started = threading.Event()
+
+        stage._label_and_write_batch(
+            batch,
+            _SignalingSentimentLabeler(started),  # pyright: ignore[reportArgumentType]
+            _BlockingEmotionLabeler(started),  # pyright: ignore[reportArgumentType]
+            labeled_dir,
+        )
+
+        result = pl.read_parquet(labeled_dir / "u_0000000a.parquet")
+        assert result.height == 2
+        assert result["sentiment"].to_list() == ["neutro", "neutro"]
+        assert result["emotion_raiva"].to_list() == [0.5, 0.5]
+
+    def test_falha_na_emocao_preserva_sentimento(
+        self, stage: LabelingStage, tmp_path: Path
+    ) -> None:
+        """A emoção é complementar: sua falha não deve descartar o sentimento já calculado."""
+        clean_dir = tmp_path / "tweets_clean"
+        clean_dir.mkdir()
+        labeled_dir = tmp_path / "tweets_labeled"
+        labeled_dir.mkdir()
+
+        frame = _write_user(clean_dir, "u_0000000a", 2)
+        batch = [("u_0000000a", frame)]
+
+        stage._label_and_write_batch(
+            batch,
+            _FakeSentimentLabeler(),  # pyright: ignore[reportArgumentType]
+            _FailingEmotionLabeler(),  # pyright: ignore[reportArgumentType]
+            labeled_dir,
+        )
+
+        result = pl.read_parquet(labeled_dir / "u_0000000a.parquet")
+        assert result.height == 2
+        assert result["sentiment"].to_list() == ["neutro", "neutro"]
+        assert "emotion_raiva" not in result.columns

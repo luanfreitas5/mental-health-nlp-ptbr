@@ -12,9 +12,11 @@ dimensionalidade de um dataset já pequeno em número de usuários.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 import polars as pl
+from rich.progress import Progress
 
 from config.environment import resolve_device
 from config.logging import get_logger
@@ -86,13 +88,26 @@ class EmotionLabeler:
         """Traduz um rótulo do modelo para o vocabulário pt-BR do projeto."""
         return EMOTION_TRANSLATIONS.get(label.lower().strip(), label.lower().strip())
 
-    def predict(self, texts: list[str]) -> list[dict[str, float]]:
+    def predict(
+        self,
+        texts: list[str],
+        *,
+        progress: Progress | None = None,
+    ) -> list[dict[str, float]]:
         """Prevê a intensidade de cada emoção-alvo.
 
         Parameters
         ----------
         texts : list of str
             Textos normalizados.
+        progress : rich.progress.Progress, optional
+            Barra de progresso já aberta onde registrar uma nova tarefa, by
+            default ``None`` (cria e gerencia a própria barra). Usado para
+            compartilhar uma única barra quando este rotulador roda em
+            paralelo com o de sentimento (ver
+            :meth:`pipelines.labeling.LabelingStage._label_parallel`) — dois
+            ``rich.progress.Progress`` independentes escrevendo no mesmo
+            console ao mesmo tempo corrompem a renderização.
 
         Returns
         -------
@@ -113,8 +128,8 @@ class EmotionLabeler:
         targets = list(self.config.target_emotions)
         results: list[dict[str, float]] = []
 
-        with build_progress() as progress:
-            task = progress.add_task("Classificando emoções", total=len(texts))
+        with nullcontext(progress) if progress is not None else build_progress() as active_progress:
+            task = active_progress.add_task("Classificando emoções", total=len(texts))
             for start in range(0, len(texts), self.config.batch_size):
                 batch = texts[start : start + self.config.batch_size]
                 outputs = classifier(batch, batch_size=self.config.batch_size)
@@ -126,7 +141,7 @@ class EmotionLabeler:
                     }
                     results.append({emotion: predicted.get(emotion, 0.0) for emotion in targets})
 
-                progress.advance(task, advance=len(batch))
+                active_progress.advance(task, advance=len(batch))
 
         return results
 
@@ -134,6 +149,8 @@ class EmotionLabeler:
         self,
         frame: pl.DataFrame,
         text_column: str = TEXT_NORMALIZED,
+        *,
+        progress: Progress | None = None,
     ) -> pl.DataFrame:
         """Adiciona uma coluna ``emotion_<nome>`` por emoção-alvo.
 
@@ -143,6 +160,8 @@ class EmotionLabeler:
             Tweets limpos.
         text_column : str, optional
             Coluna de texto de entrada, by default ``text_normalized``.
+        progress : rich.progress.Progress, optional
+            Repassado a :meth:`predict`; ver o parâmetro homônimo lá.
 
         Returns
         -------
@@ -156,7 +175,7 @@ class EmotionLabeler:
         """
         require_columns(frame, [text_column], context="rotulação de emoções")
 
-        predictions = self.predict(frame[text_column].to_list())
+        predictions = self.predict(frame[text_column].to_list(), progress=progress)
         columns = [
             pl.Series(
                 f"{EMOTION_PREFIX}{emotion}",
