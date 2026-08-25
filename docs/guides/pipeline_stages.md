@@ -546,15 +546,19 @@ rótulo do usuário.
    - `build_profile_columns`: `n_tweets`, `active_days`, `span_days`,
      `first_tweet_at`, `last_tweet_at`;
    - une, condicionalmente por grupo ativo (`config.features.groups`):
-     `_join_linguistic_group` (`features/linguistic.py`: razões de léxico,
-     comprimento de texto, diversidade lexical — TTR + MTLD, uso de
-     pronomes, n-gramas TF-IDF via `features/ngrams.py`),
-     `_join_emotional_group` (`features/emotional.py`: distribuição de
-     sentimento, confiança, intensidade de emoções),
-     `_join_temporal_group` (`features/temporal.py`: volume, atividade
-     noturna, entropia circadiana, tendência de sentimento, intensificação
-     de risco), `_join_behavioral_group` (`features/behavioral.py`:
-     engajamento, audiência, razões seguidor/seguindo e de respostas),
+     `_build_independent_groups` roda **em paralelo** (uma thread por grupo,
+     via `ThreadPoolExecutor`) os grupos linguístico, temporal e
+     comportamental — nenhum consome a saída de outro, só leem `tweets`
+     (e, no comportamental, `metadata`): linguístico (`features/linguistic.py`:
+     razões de léxico, comprimento de texto, diversidade lexical — TTR +
+     MTLD, uso de pronomes lematizados em lote via spaCy/`nlp.pipe`,
+     n-gramas TF-IDF via `features/ngrams.py`), temporal (`features/temporal.py`:
+     volume, atividade noturna, entropia circadiana, tendência de
+     sentimento, intensificação de risco) e comportamental
+     (`features/behavioral.py`: engajamento, audiência, razões
+     seguidor/seguindo e de respostas). Em seguida, sequencialmente (dependem
+     de artefatos externos): `_join_emotional_group` (`features/emotional.py`:
+     distribuição de sentimento, confiança, intensidade de emoções),
      `_join_semantic_group` (agregação dos embeddings da etapa 5) e
      `_join_psychological_group` (vetor da etapa 4);
    - **remove as colunas que vazam o rótulo** via

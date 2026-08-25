@@ -12,6 +12,8 @@ fora sinal.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Final
 
 import polars as pl
@@ -212,15 +214,70 @@ def handle_missing_values(
     return _impute_missing(result, feature_columns, config.aggregation.missing_strategy)
 
 
-def _join_linguistic_group(
-    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
-) -> pl.DataFrame:
-    """Une o grupo de features linguísticas, quando habilitado."""
+def _independent_group_builders(
+    tweets: pl.DataFrame,
+    enabled: set[str],
+    config: FeaturesConfig,
+    metadata: pl.DataFrame | None,
+) -> dict[str, Callable[[], pl.DataFrame]]:
+    """Mapeia nome -> construtor de cada grupo independente entre si, se habilitado.
+
+    Linguístico, temporal e comportamental só leem ``tweets`` (e, no caso
+    comportamental, ``metadata``) — nenhum consome a saída de outro grupo —,
+    por isso podem rodar em paralelo em vez de em sequência. Emocional,
+    semântico e psicológico ficam fora deste lote: dependem de artefatos
+    externos (embeddings da etapa 5, vetores do LLM da etapa 4) e continuam
+    unidos sequencialmente em :func:`build_user_features_raw`.
+    """
+    builders: dict[str, Callable[[], pl.DataFrame]] = {}
     if "linguistic" in enabled:
-        return result.join(
-            build_linguistic_features(tweets, config.linguistic), on=USER_ID, how="left"
+        builders["linguistic"] = lambda: build_linguistic_features(tweets, config.linguistic)
+    if "temporal" in enabled:
+        builders["temporal"] = lambda: build_temporal_features(tweets, config.temporal)
+    if "behavioral" in enabled:
+        builders["behavioral"] = lambda: build_behavioral_features(
+            tweets, metadata, config.behavioral
         )
-    return result
+    return builders
+
+
+def _build_independent_groups(
+    tweets: pl.DataFrame,
+    enabled: set[str],
+    config: FeaturesConfig,
+    metadata: pl.DataFrame | None,
+) -> list[pl.DataFrame]:
+    """Constrói em paralelo os grupos linguístico, temporal e comportamental habilitados.
+
+    Cada grupo é independente dos demais (ver :func:`_independent_group_builders`),
+    então roda em uma thread própria em vez de esperar os outros terminarem —
+    o polars libera o GIL na maior parte do trabalho pesado (agregações,
+    joins), então threads bastam, sem o custo de serializar ``tweets`` entre
+    processos.
+
+    Parameters
+    ----------
+    tweets : pl.DataFrame
+        Tweets do(s) usuário(s) sendo processados.
+    enabled : set of str
+        Grupos ativos em ``config.features.groups``.
+    config : FeaturesConfig
+        Seção ``features`` de ``configs/features.yaml``.
+    metadata : pl.DataFrame, optional
+        Metadados públicos dos usuários (features de audiência).
+
+    Returns
+    -------
+    list of pl.DataFrame
+        Um frame por grupo habilitado, pronto para ser unido a ``result``.
+    """
+    builders = _independent_group_builders(tweets, enabled, config, metadata)
+    if not builders:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(builders)) as executor:
+        futures = {name: executor.submit(builder) for name, builder in builders.items()}
+        return [futures[name].result() for name in builders]
 
 
 def _join_emotional_group(
@@ -230,32 +287,6 @@ def _join_emotional_group(
     if "emotional" in enabled:
         return result.join(
             build_emotional_features(tweets, config.emotional), on=USER_ID, how="left"
-        )
-    return result
-
-
-def _join_temporal_group(
-    result: pl.DataFrame, tweets: pl.DataFrame, enabled: set[str], config: FeaturesConfig
-) -> pl.DataFrame:
-    """Une o grupo de features temporais, quando habilitado."""
-    if "temporal" in enabled:
-        return result.join(build_temporal_features(tweets, config.temporal), on=USER_ID, how="left")
-    return result
-
-
-def _join_behavioral_group(
-    result: pl.DataFrame,
-    tweets: pl.DataFrame,
-    enabled: set[str],
-    config: FeaturesConfig,
-    metadata: pl.DataFrame | None,
-) -> pl.DataFrame:
-    """Une o grupo de features comportamentais, quando habilitado."""
-    if "behavioral" in enabled:
-        return result.join(
-            build_behavioral_features(tweets, metadata, config.behavioral),
-            on=USER_ID,
-            how="left",
         )
     return result
 
@@ -356,10 +387,9 @@ def build_user_features_raw(
     result = build_profile_columns(tweets)
 
     with log_duration("Construção da matriz de atributos"):
-        result = _join_linguistic_group(result, tweets, enabled, config)
+        for group_frame in _build_independent_groups(tweets, enabled, config, metadata):
+            result = result.join(group_frame, on=USER_ID, how="left")
         result = _join_emotional_group(result, tweets, enabled, config)
-        result = _join_temporal_group(result, tweets, enabled, config)
-        result = _join_behavioral_group(result, tweets, enabled, config, metadata)
         result = _join_semantic_group(result, tweets, enabled, config)
         result = _join_psychological_group(result, enabled, config, psychological_scores)
 
