@@ -16,7 +16,10 @@ provider: ollama
 ollama:
   host: http://localhost:11434
   timeout_seconds: 120
-  keep_alive: 5m
+  # Alto o bastante para sobreviver a folgas entre lotes de usuários (troca
+  # de partição, backoff de retry) sem descarregar o modelo da VRAM — cada
+  # chamada renova o TTL, então só um gap maior que este valor força reload.
+  keep_alive: 30m
   # Falha explicitamente se o modelo não estiver baixado, em vez de baixar
   # vários GB no meio de um pipeline longo sem o usuário perceber.
   auto_pull: false
@@ -41,11 +44,18 @@ psychological_features:
     - esperanca
     - ansiedade
     - risco_suicida
-  batch_size_tweets: 20
+  # Lotes maiores = menos chamadas ao LLM e menos overhead de prompt (system
+  # prompt + formatação) por tweet processado. 40 ainda cabe com folga em
+  # `num_ctx=8192` (ver `safeguards.max_prompt_chars`, que trunca antes de
+  # estourar o contexto em vez de falhar silenciosamente).
+  batch_size_tweets: 40
   # llama3.2 (~3B, quantizado) ocupa poucos GB de VRAM; a V100S-32GB comporta
   # mais requisições concorrentes que o padrão pensado para GPUs de 8 GB.
-  # Requer `OLLAMA_NUM_PARALLEL >= 4` no servidor Ollama para ter efeito real.
-  max_concurrency: 4
+  # Requer `OLLAMA_NUM_PARALLEL >= max_concurrency` no servidor Ollama para
+  # ter efeito real (senão as chamadas extras só ficam na fila do servidor).
+  # 8 é um ponto de partida conservador — meça o teto real desta GPU com
+  # `uv run python scripts/benchmark_ollama_concurrency.py` e ajuste aqui.
+  max_concurrency: 8
   cache:
     enabled: true                # cache por hash do prompt: reexecutar é barato
     path: data/interim/llm_cache

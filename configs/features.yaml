@@ -110,8 +110,10 @@ psychological:
     - risco_suicida
   # O LLM analisa lotes de tweets do usuário (mais barato e mais contextual
   # que tweet a tweet, que perde a evolução temporal).
+  # Precisa acompanhar `psychological_features.batch_size_tweets` em
+  # llm.yaml — é só documentação da etapa 4, não usado para recalcular nada.
   granularity: batch             # batch | tweet
-  batch_size_tweets: 20
+  batch_size_tweets: 40
   aggregations: [mean, max, std, p90]
 
 # --- Agregação tweet -> usuário ---------------------------------------------

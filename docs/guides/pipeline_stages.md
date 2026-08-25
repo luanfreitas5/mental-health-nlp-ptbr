@@ -357,10 +357,12 @@ sem o grupo `psychological`, com aviso explícito).
    inferência já feita em caso de interrupção.
 5. `PsychologicalExtractor.extract_frame` (`src/labeling/llm.py`): ordena
    tweets por `[user_id, created_at]`, particiona por usuário, quebra em
-   lotes de `batch_size_tweets` (20) preservando `batch_index` e
+   lotes de `batch_size_tweets` (40) preservando `batch_index` e
    `window_start`/`window_end`; dispara as chamadas ao LLM **em paralelo**
-   com `ThreadPoolExecutor(max_workers=max_concurrency)` (4) — justificado
-   por ser I/O bloqueante de rede ao Ollama, não trabalho de CPU.
+   com `ThreadPoolExecutor(max_workers=max_concurrency)` (8, ponto de
+   partida — meça o teto real da GPU com
+   `scripts/benchmark_ollama_concurrency.py`) — justificado por ser I/O
+   bloqueante de rede ao Ollama, não trabalho de CPU.
 6. `extract_batch` (por thread): monta o prompt
    (`build_psychological_prompt`), chama `client.generate(...)` com
    `temperature=0.0`, `seed=42`, `num_ctx=8192`; valida a resposta como
@@ -386,13 +388,16 @@ sem o grupo `psychological`, com aviso explícito).
 
 ### Configuração relevante (`configs/llm.yaml`)
 
-- `ollama`: `host`, `timeout_seconds=120`, `keep_alive=5m`,
+- `ollama`: `host`, `timeout_seconds=120`, `keep_alive=30m` (renovado a cada
+  chamada — evita descarregar o modelo da VRAM entre lotes de usuários),
   `auto_pull=false` (falha explícita em vez de baixar GBs silenciosamente),
   `retry_attempts=3`, `backoff_seconds=5`.
 - `psychological_features`: `enabled=true`, `model=llama3.2`,
   `temperature=0.0`, `seed=42`, `num_ctx=8192`, `max_repairs=2`,
-  `batch_size_tweets=20`, `max_concurrency=4` (dimensionado para GPU
-  V100S-32GB), `cache.enabled=true`.
+  `batch_size_tweets=40`, `max_concurrency=8` (ponto de partida para a GPU
+  V100S-32GB — requer `OLLAMA_NUM_PARALLEL >= max_concurrency` no servidor;
+  meça o teto real com `scripts/benchmark_ollama_concurrency.py` antes de
+  subir mais), `cache.enabled=true`.
 - `prompts.version="1.0.0"`, templates pt-BR com regras (JSON apenas,
   `esperanca` é dimensão positiva, não inferir diagnóstico clínico, usar 0.5
   se conteúdo insuficiente).

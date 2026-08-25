@@ -57,6 +57,13 @@ services:
     image: ollama/ollama:latest
     container_name: mhnlp-ollama
     profiles: ["llm"]
+    environment:
+      # Precisa acompanhar `psychological_features.max_concurrency` em
+      # configs/llm.yaml — sem isso o servidor enfileira as chamadas extras
+      # em vez de processá-las em paralelo, e a concorrência configurada no
+      # app não tem efeito real. Meça o teto real desta GPU com
+      # scripts/benchmark_ollama_concurrency.py antes de subir ainda mais.
+      OLLAMA_NUM_PARALLEL: "8"
     ports:
       - "11434:11434"
     volumes:
