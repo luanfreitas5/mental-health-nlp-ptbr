@@ -27,6 +27,7 @@ from config.logging import get_logger
 from config.settings import LinguisticSection
 from constants.columns import LINGUISTIC_PREFIX, TEXT_CLEAN, USER_ID
 from constants.defaults import NEGATION_TERMS, PRONOUN_GROUPS
+from preprocessing.tokenization import Tokenizer
 from utils.lexicons import load_lexicons, normalize_term
 from utils.validation import require_columns
 
@@ -140,9 +141,11 @@ def compute_text_length(tweets: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _tokenize_user_text(texts: list[str]) -> list[str]:
-    """Tokeniza os textos de um usuário em uma lista única de tokens (sem normalização)."""
-    return [token for text in texts for token in text.split() if token]
+def _naive_tokenize(texts: list[str]) -> list[list[str]]:
+    """Tokeniza por espaço, sem lematização,
+    usado quando nenhum lote pré-tokenizado é informado.
+    """
+    return [[token for token in text.split() if token] for text in texts]
 
 
 def _build_diversity_record(user_id: str, tokens: list[str]) -> dict[str, float | str]:
@@ -157,13 +160,22 @@ def _build_diversity_record(user_id: str, tokens: list[str]) -> dict[str, float 
     }
 
 
-def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
+def compute_lexical_diversity(
+    tweets: pl.DataFrame, tokens: list[list[str]] | None = None
+) -> pl.DataFrame:
     """Calcula a diversidade lexical do histórico de cada usuário.
 
     Parameters
     ----------
     tweets : pl.DataFrame
         Tweets limpos.
+    tokens : list of list of str, optional
+        Tokens (idealmente lematizados) de cada linha de ``tweets``, na mesma
+        ordem — produzidos em um único lote por
+        :meth:`preprocessing.tokenization.Tokenizer.tokenize_batch` (ver
+        :func:`build_linguistic_features`, que tokeniza uma vez e reaproveita
+        aqui e em :func:`compute_pronoun_usage`). Quando omitido, cai no split
+        ingênuo por espaço, sem lematização.
 
     Returns
     -------
@@ -180,12 +192,15 @@ def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
     """
     require_columns(tweets, [USER_ID, TEXT_CLEAN], context="diversidade lexical")
 
+    token_lists = tokens if tokens is not None else _naive_tokenize(tweets[TEXT_CLEAN].to_list())
+    frame = tweets.select(USER_ID).with_columns(pl.Series("_tokens", token_lists))
+
     records: list[dict[str, float | str]] = []
-    for (user_id,), user_frame in tweets.partition_by(
+    for (user_id,), user_frame in frame.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        tokens = _tokenize_user_text(user_frame[TEXT_CLEAN].to_list())
-        records.append(_build_diversity_record(user_id, tokens))
+        user_tokens = [token for row in user_frame["_tokens"].to_list() for token in row]
+        records.append(_build_diversity_record(user_id, user_tokens))
 
     return pl.DataFrame(records).sort(USER_ID)
 
@@ -193,11 +208,6 @@ def compute_lexical_diversity(tweets: pl.DataFrame) -> pl.DataFrame:
 def _normalize_pronoun_groups(groups: Mapping[str, Iterable[str]]) -> dict[str, set[str]]:
     """Normaliza os termos de cada grupo pronominal para comparação."""
     return {group: {normalize_term(term) for term in terms} for group, terms in groups.items()}
-
-
-def _tokenize_user_text_normalized(texts: list[str]) -> list[str]:
-    """Tokeniza e normaliza os textos de um usuário em uma lista única de tokens."""
-    return [normalize_term(token) for text in texts for token in text.split() if token]
 
 
 def _count_pronoun_groups(
@@ -234,7 +244,9 @@ def _build_pronoun_record(
     return record
 
 
-def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
+def compute_pronoun_usage(
+    tweets: pl.DataFrame, tokens: list[list[str]] | None = None
+) -> pl.DataFrame:
     """Calcula a proporção de pronomes por pessoa gramatical.
 
     O uso elevado de pronomes de primeira pessoa do singular é um dos achados
@@ -246,6 +258,12 @@ def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
     ----------
     tweets : pl.DataFrame
         Tweets limpos.
+    tokens : list of list of str, optional
+        Tokens (idealmente lematizados) de cada linha de ``tweets``, na mesma
+        ordem — ver :func:`compute_lexical_diversity`, que documenta a origem
+        (lote único de ``Tokenizer.tokenize_batch``). São normalizados (caixa
+        baixa, sem acento) aqui antes da comparação com os léxicos de pronome
+        e negação, independentemente de terem sido informados ou não.
 
     Returns
     -------
@@ -263,13 +281,17 @@ def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
     normalized_groups = _normalize_pronoun_groups(PRONOUN_GROUPS)
     normalized_negations = {normalize_term(term) for term in NEGATION_TERMS}
 
+    token_lists = tokens if tokens is not None else _naive_tokenize(tweets[TEXT_CLEAN].to_list())
+    normalized_token_lists = [[normalize_term(token) for token in row] for row in token_lists]
+    frame = tweets.select(USER_ID).with_columns(pl.Series("_tokens", normalized_token_lists))
+
     records: list[dict[str, float | str]] = []
-    for (user_id,), user_frame in tweets.partition_by(
+    for (user_id,), user_frame in frame.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        tokens = _tokenize_user_text_normalized(user_frame[TEXT_CLEAN].to_list())
-        counts = _count_pronoun_groups(tokens, normalized_groups)
-        records.append(_build_pronoun_record(user_id, tokens, counts, normalized_negations))
+        user_tokens = [token for row in user_frame["_tokens"].to_list() for token in row]
+        counts = _count_pronoun_groups(user_tokens, normalized_groups)
+        records.append(_build_pronoun_record(user_id, user_tokens, counts, normalized_negations))
 
     return pl.DataFrame(records).sort(USER_ID)
 
@@ -277,16 +299,25 @@ def compute_pronoun_usage(tweets: pl.DataFrame) -> pl.DataFrame:
 def _collect_linguistic_frames(
     tweets: pl.DataFrame, config: LinguisticSection
 ) -> list[pl.DataFrame]:
-    """Calcula os subgrupos de features linguísticas habilitados na configuração."""
+    """Calcula os subgrupos de features linguísticas habilitados na configuração.
+
+    Diversidade lexical e uso de pronomes lematizam com spaCy em um único
+    lote (``nlp.pipe`` sobre todos os tweets do usuário de uma vez), e não
+    tweet a tweet — o lote é calculado uma única vez aqui e reaproveitado
+    pelas duas features, em vez de cada uma rodar o modelo de novo.
+    """
     frames: list[pl.DataFrame] = []
     if config.lexicon_ratios:
         frames.append(compute_lexicon_ratios(tweets, config.lexicon_ratios))
     if config.text_length:
         frames.append(compute_text_length(tweets))
-    if config.lexical_diversity:
-        frames.append(compute_lexical_diversity(tweets))
-    if config.pronouns:
-        frames.append(compute_pronoun_usage(tweets))
+
+    if config.lexical_diversity or config.pronouns:
+        tokens = Tokenizer(config.tokenization).tokenize_batch(tweets[TEXT_CLEAN].to_list())
+        if config.lexical_diversity:
+            frames.append(compute_lexical_diversity(tweets, tokens))
+        if config.pronouns:
+            frames.append(compute_pronoun_usage(tweets, tokens))
     return frames
 
 

@@ -447,6 +447,9 @@ class LinguisticSection(_Section):
     text_length: bool = True
     lexical_diversity: bool = True
     pronouns: bool = True
+    # Usada para lematizar em lote (nlp.pipe) antes de calcular diversidade
+    # lexical e uso de pronomes — ver features.linguistic._collect_linguistic_frames.
+    tokenization: TokenizationSection
     ngrams: NgramsSection
 
 

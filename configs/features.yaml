@@ -33,6 +33,14 @@ linguistic:
   text_length: true              # comprimento médio/desvio dos textos
   lexical_diversity: true        # type-token ratio + MTLD
   pronouns: true                 # 1ª, 2ª e 3ª pessoa (singular e plural)
+  # Lematização em lote (nlp.pipe) usada por lexical_diversity e pronouns,
+  # não pelo TF-IDF (ver ngrams abaixo). Mesmo backend de preprocessing.yaml.
+  tokenization:
+    backend: spacy                # spacy | regex
+    spacy_model: pt_core_news_sm
+    lemmatize: true
+    batch_size: 256
+    n_process: 1
   ngrams:
     enabled: true
     vectorizer: tfidf
