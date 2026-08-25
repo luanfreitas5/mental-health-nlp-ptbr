@@ -50,7 +50,7 @@ class SentimentPrediction:
 def _import_transformers() -> Any:
     """Importa ``transformers`` sob demanda, com erro explicativo se ausente."""
     try:
-        import transformers
+        import transformers  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise MissingDependencyError(
             "transformers não está instalado. Rode 'make install-llm' para instalar os "

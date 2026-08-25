@@ -67,8 +67,11 @@ class EmbeddingEncoder:
             return self._tokenizer, self._model
 
         try:
-            import torch
-            from transformers import AutoModel, AutoTokenizer
+            import torch  # pyright: ignore[reportMissingImports]
+            from transformers import (  # pyright: ignore[reportMissingImports]
+                AutoModel,
+                AutoTokenizer,
+            )
         except ImportError as error:
             raise MissingDependencyError(
                 "PyTorch/Transformers ausentes. Rode 'make install-llm' para instalar os "
@@ -120,7 +123,7 @@ class EmbeddingEncoder:
         if not texts:
             return np.empty((0, 0), dtype=np.float32)
 
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
 
         tokenizer, model = self._load()
         vectors: list[np.ndarray] = []

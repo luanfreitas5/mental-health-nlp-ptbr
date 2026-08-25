@@ -67,7 +67,7 @@ class UserClassification(BaseModel):
 def _import_ollama() -> Any:
     """Importa o cliente ``ollama`` sob demanda."""
     try:
-        import ollama
+        import ollama  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise MissingDependencyError(
             "O pacote 'ollama' não está instalado. Rode 'uv sync --extra llm' e garanta "

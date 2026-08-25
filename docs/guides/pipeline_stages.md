@@ -1,11 +1,11 @@
 # Etapas do Pipeline (2–10)
 
-Este guia descreve, com base no código-fonte atual em [`src/`](../../src), como cada
+Este guia descreve, com base no código-fonte atual em `src/`, como cada
 etapa do pipeline é implementada — da etapa **2 (`preprocess`)** até a etapa
 **10 (`report`)**.
 
 A numeração segue o registro central em
-[`src/pipelines/workflow.py`](../../src/pipelines/workflow.py) (dicionário `STAGES`),
+`src/pipelines/workflow.py` (dicionário `STAGES`),
 que é a única fonte de verdade sobre quais etapas existem e em que ordem rodam:
 
 | # | Nome (`--stage`) | Classe | Módulo |

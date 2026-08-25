@@ -44,7 +44,7 @@ def load_spacy_model(model_name: str) -> Any | None:
     True
     """
     try:
-        import spacy
+        import spacy  # pyright: ignore[reportMissingImports]
     except ImportError:
         logger.warning(
             "spaCy não está instalado: a lematização será desativada e a tokenização "

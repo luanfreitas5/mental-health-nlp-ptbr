@@ -37,7 +37,7 @@ from utils.hashing import pseudonymize
 from utils.progress import build_progress
 
 if TYPE_CHECKING:  # pragma: no cover — apenas para o type checker
-    from twscrape import API
+    from twscrape import API  # pyright: ignore[reportMissingImports]
 
 logger = get_logger(__name__)
 
@@ -68,7 +68,7 @@ class CandidateUser:
 def _import_twscrape() -> Any:
     """Importa o ``twscrape`` sob demanda, com erro explicativo se ausente."""
     try:
-        import twscrape
+        import twscrape  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise MissingDependencyError(
             "twscrape não está instalado. Rode 'uv sync --extra collect' e configure "

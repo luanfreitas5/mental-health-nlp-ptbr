@@ -93,7 +93,7 @@ def build_estimator(estimator: str, params: dict[str, Any], n_classes: int) -> B
 
     if estimator == "lightgbm":
         try:
-            from lightgbm import LGBMClassifier
+            from lightgbm import LGBMClassifier  # pyright: ignore[reportMissingImports]
         except ImportError as error:
             raise MissingDependencyError(
                 "lightgbm não está instalado. Rode 'uv sync --dev'."

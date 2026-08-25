@@ -32,7 +32,7 @@ logger = get_logger(__name__)
 def _import_torch() -> Any:
     """Importa o PyTorch sob demanda, com erro explicativo se ausente."""
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise MissingDependencyError(
             "PyTorch não está instalado. Rode 'make install-llm' para instalar os extras "

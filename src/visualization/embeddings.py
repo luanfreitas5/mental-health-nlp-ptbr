@@ -65,7 +65,7 @@ def reduce_dimensions(
 
     if method == "umap":
         try:
-            import umap
+            import umap  # pyright: ignore[reportMissingImports]
         except ImportError:
             logger.warning("Pacote 'umap-learn' ausente: usando t-SNE como alternativa.")
             method = "tsne"
@@ -254,7 +254,7 @@ def plot_interaction_network(
     >>> plot_interaction_network(tweets, rotulos)  # doctest: +SKIP
     """
     try:
-        import networkx as nx
+        import networkx as nx  # pyright: ignore[reportMissingImports]
     except ImportError:
         logger.warning("Pacote 'networkx' ausente: rede de similaridade não gerada.")
         return None

@@ -285,7 +285,7 @@ def plot_wordcloud(tweets: pl.DataFrame, labels: pl.DataFrame) -> Any | None:
     >>> plot_wordcloud(tweets, rotulos)  # doctest: +SKIP
     """
     try:
-        from wordcloud import WordCloud
+        from wordcloud import WordCloud  # pyright: ignore[reportMissingImports]
     except ImportError:
         logger.warning("Pacote 'wordcloud' ausente: nuvens de palavras não geradas.")
         return None

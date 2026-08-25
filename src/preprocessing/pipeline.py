@@ -78,13 +78,9 @@ def apply_text_processing(frame: pl.DataFrame, config: Config) -> pl.DataFrame:
             .alias(TEXT_NORMALIZED)
         )
 
-    frame = frame.with_columns(
-        finish_normalize_text_expr(pl.col(TEXT_NORMALIZED), normalization).alias(TEXT_NORMALIZED)
-    )
-
     return frame.with_columns(
-        clean_text_expr(pl.col(TEXT_NORMALIZED), cleaning, stopwords).alias(TEXT_CLEAN)
-    )
+        finish_normalize_text_expr(pl.col(TEXT_NORMALIZED), normalization).alias(TEXT_NORMALIZED)
+    ).with_columns(clean_text_expr(pl.col(TEXT_NORMALIZED), cleaning, stopwords).alias(TEXT_CLEAN))
 
 
 def run_preprocessing(

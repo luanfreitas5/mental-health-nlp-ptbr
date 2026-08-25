@@ -60,7 +60,7 @@ def seed_everything(seed: int = RANDOM_SEED, *, deterministic_torch: bool = True
     np.random.seed(seed)  # noqa: NPY002
 
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
     except ImportError:
         logger.debug("PyTorch ausente: sementes de deep learning não foram fixadas.")
         return
@@ -98,7 +98,7 @@ def resolve_device(preference: Literal["auto", "cpu", "cuda"] = "auto") -> str:
         return "cpu"
 
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
     except ImportError:
         if preference == "cuda":
             logger.warning("CUDA solicitada, mas o PyTorch não está instalado. Usando CPU.")
@@ -150,7 +150,7 @@ def describe_environment() -> dict[str, Any]:
         info[key] = getattr(module, "__version__", "desconhecida")
 
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
 
         info["cuda_available"] = torch.cuda.is_available()
         if torch.cuda.is_available():

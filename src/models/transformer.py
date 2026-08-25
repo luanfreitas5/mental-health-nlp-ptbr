@@ -35,8 +35,8 @@ logger = get_logger(__name__)
 def _import_transformer_stack() -> tuple[Any, Any]:
     """Importa PyTorch e Transformers sob demanda."""
     try:
-        import torch
-        import transformers
+        import torch  # pyright: ignore[reportMissingImports]
+        import transformers  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise MissingDependencyError(
             "PyTorch/Transformers ausentes. Rode 'make install-llm' para instalar os extras de LLM."

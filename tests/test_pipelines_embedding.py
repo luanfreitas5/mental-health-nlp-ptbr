@@ -94,9 +94,9 @@ def test_encode_and_cache_user_writes_owner_sidecar(tmp_path: Path, partition_di
     ok = stage._encode_and_cache_user(
         "000c7X_fulljson",
         partition_dir,
-        _FakeEncoder(),
+        _FakeEncoder(),  # pyright: ignore[reportArgumentType]
         "modelo",
-        cache_dir,  # pyright: ignore[reportArgumentType]
+        cache_dir,
     )
 
     assert ok is True
