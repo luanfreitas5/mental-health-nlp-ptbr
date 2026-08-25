@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
+from itertools import chain
 
 import polars as pl
 
@@ -199,7 +200,7 @@ def compute_lexical_diversity(
     for (user_id,), user_frame in frame.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        user_tokens = [token for row in user_frame["_tokens"].to_list() for token in row]
+        user_tokens = list(chain.from_iterable(user_frame["_tokens"].to_list()))
         records.append(_build_diversity_record(user_id, user_tokens))
 
     return pl.DataFrame(records).sort(USER_ID)
@@ -289,7 +290,7 @@ def compute_pronoun_usage(
     for (user_id,), user_frame in frame.partition_by(
         USER_ID, as_dict=True, maintain_order=True
     ).items():
-        user_tokens = [token for row in user_frame["_tokens"].to_list() for token in row]
+        user_tokens = list(chain.from_iterable(user_frame["_tokens"].to_list()))
         counts = _count_pronoun_groups(user_tokens, normalized_groups)
         records.append(_build_pronoun_record(user_id, user_tokens, counts, normalized_negations))
 
