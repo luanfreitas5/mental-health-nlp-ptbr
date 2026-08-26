@@ -2184,11 +2184,19 @@ longitudinal.</p>
 <hr />
 <h2 id="etapa-3-rotulagem">Etapa 3 — Rotulagem<a class="headerlink" href="#etapa-3-rotulagem" title="Permanent link">&para;</a></h2>
 <h3 id="objetivo_1">Objetivo<a class="headerlink" href="#objetivo_1" title="Permanent link">&para;</a></h3>
-<p>Produzir dois níveis de rótulo: (1) sentimento e emoções por tweet, via
-encoders Transformer; (2) classe do usuário (<code>controle</code> / <code>depressao</code> /
+<p>Produzir dois níveis de rótulo:</p>
+<ol>
+<li>
+<p>sentimento e emoções por tweet, via
+encoders Transformer;</p>
+</li>
+<li>
+<p>classe do usuário (<code>controle</code> / <code>depressao</code> /
 <code>ideacao_suicida</code>) por <strong>supervisão fraca</strong>, combinando votos de três fontes
 ponderadas, com consenso mínimo, amostragem para revisão manual e cálculo de
 concordância (kappa de Cohen).</p>
+</li>
+</ol>
 <h3 id="entradas-saidas_1">Entradas / Saídas<a class="headerlink" href="#entradas-saidas_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Classe</strong>: <code>LabelingStage</code> em <code>src/pipelines/labeling.py</code>.</li>
