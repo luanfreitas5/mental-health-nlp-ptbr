@@ -9,7 +9,7 @@ export PYTHONHASHSEED := 42
 
 .DEFAULT_GOAL := help
 .PHONY: help init venv install install-all install-llm install-collect install-nlp spacy-model update lock export \
-	check format lint typecheck security deadcode complexity docstrings refurb quality \
+	lint typecheck security deadcode complexity docstrings modernize quality \
 	test smoke test-all coverage hooks pre-commit update-hooks release docs docs-serve docs-deploy profile clean cache jupyter notebook add remove tree \
 	clean-processed clean-reports clean-outputs clean-notebooks \
 	status collect collect-dry-run preprocess label psych embed features split train evaluate report \
@@ -59,13 +59,8 @@ export:
 	$(UV) export --no-hashes -o requirements.txt
 
 # --- Qualidade -------------------------------------------------------------
-check:  ## Checa formatação com ruff
-	$(UV) run ruff check .
-
-format:  ## Formata o código com ruff
+lint: ## Lint com ruff (Format + Check)
 	$(UV) run ruff format .
-
-lint: ## Lint com ruff
 	$(UV) run ruff check --fix .
 
 typecheck:  ## Type checking estático (basedPyright)
@@ -84,10 +79,10 @@ complexity:  ## Limites de complexidade (xenon)
 docstrings:  ## Cobertura de docstrings (interrogate)
 	$(UV) run interrogate -v src
 
-refurb:  ## Detecta código redundante (refurb)
+modernize:  ## Detecta código redundante (refurb)
 	$(UV) run refurb src
 
-quality: format lint typecheck security deadcode complexity docstrings refurb   ## Roda toda a suíte de qualidade (espelha o CI)
+quality: lint typecheck security deadcode complexity docstrings modernize   ## Roda toda a suíte de qualidade (espelha o CI)
 
 # --- Testes ----------------------------------------------------------------
 test:  ## Roda os testes com cobertura
@@ -200,7 +195,7 @@ split:  ## [7] Particiona os usuários em treino/validação/teste
 	$(RUN) --stage split
 
 train:  ## [8] Treina os modelos com validação cruzada
-	$(RUN) --stage train
+	$(RUN) --stage train --include-exploratory
 
 evaluate:  ## [9] Avalia no teste, compara modelos e roda a ablação
 	$(RUN) --stage evaluate
