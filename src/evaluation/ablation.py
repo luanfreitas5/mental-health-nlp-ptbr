@@ -20,13 +20,13 @@ juntos derrubaria o desempenho.
 from __future__ import annotations
 
 import operator
-from collections.abc import Callable
+from collections import defaultdict
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import numpy as np
 import polars as pl
-from rich.progress import Progress, TaskID
 
 from config.logging import get_logger
 from config.settings import AblationSection, Config
@@ -35,7 +35,7 @@ from evaluation.metrics import compute_metrics
 from models.base import UserDataset
 from models.factory import create_model
 from schemas.features import list_feature_columns
-from utils.progress import build_progress
+from utils.parallel import run_thread_pool
 
 logger = get_logger(__name__)
 
@@ -124,36 +124,10 @@ def _resolve_available_groups(
     return available
 
 
-def _run_ablation_repeats(
-    train: UserDataset,
-    test: UserDataset,
-    name: str,
-    spec: Any,
-    config: Config,
-    ablation_config: AblationSection,
-    metric: str,
-) -> list[float]:
-    """Repete o treino/avaliação do modelo base para uma configuração de grupos."""
-    scores: list[float] = []
-    for repeat in range(ablation_config.n_repeats):
-        # A semente varia entre repetições para capturar a variância do
-        # próprio treinamento, e não apenas a dos dados.
-        params = {**spec.params, "random_state": config.random_seed + repeat}
-        model = create_model(
-            f"{ablation_config.base_model}_{name}",
-            spec.model_copy(update={"params": params}),
-            config,
-        )
-        model.fit(train)
-        predictions = model.predict(test)
-        assert test.labels is not None
-        scores.append(compute_metrics(test.labels, predictions)[metric])
-    return scores
-
-
-def _evaluate_group_configuration(
+def _single_ablation_fit(
     groups: list[str],
     name: str,
+    repeat: int,
     train_features: pl.DataFrame,
     test_features: pl.DataFrame,
     label_to_index: dict[str, int],
@@ -161,57 +135,64 @@ def _evaluate_group_configuration(
     config: Config,
     ablation_config: AblationSection,
     metric: str,
-) -> AblationResult:
-    """Treina e avalia o modelo base restrito a um conjunto de grupos."""
+) -> float:
+    """Treina e avalia uma única repetição de uma configuração de grupos.
+
+    É a unidade de trabalho paralelizável do Ablation Study: cada combinação
+    (configuração de grupos × repetição) é um refit independente do modelo
+    base, sem estado compartilhado com as demais.
+    """
     train = build_dataset_for_groups(train_features, groups, label_to_index)
     test = build_dataset_for_groups(test_features, groups, label_to_index)
-    scores = _run_ablation_repeats(train, test, name, spec, config, ablation_config, metric)
 
+    # A semente varia entre repetições para capturar a variância do próprio
+    # treinamento, e não apenas a dos dados.
+    params = {**spec.params, "random_state": config.random_seed + repeat}
+    model = create_model(
+        f"{ablation_config.base_model}_{name}",
+        spec.model_copy(update={"params": params}),
+        config,
+    )
+    model.fit(train)
+    predictions = model.predict(test)
+    assert test.labels is not None
+    return compute_metrics(test.labels, predictions)[metric]
+
+
+def _resolve_configurations(
+    available: list[str],
+    ablation_config: AblationSection,
+) -> dict[str, list[str]]:
+    """Enumera todas as configurações de grupos do Ablation Study.
+
+    ``"completo"`` (baseline), ``"sem_<grupo>"`` (leave-one-out) e, se
+    habilitado, ``"apenas_<grupo>"`` (only-one) — uma entrada por
+    configuração, independente das outras.
+    """
+    configurations = {"completo": available}
+    configurations.update(
+        {f"sem_{group}": [g for g in available if g != group] for group in available}
+    )
+    if ablation_config.include_only_one:
+        configurations.update({f"apenas_{group}": [group] for group in available})
+    return configurations
+
+
+def _build_ablation_result(
+    name: str,
+    groups: list[str],
+    scores: list[float],
+    train_features: pl.DataFrame,
+) -> AblationResult:
+    """Resume as repetições de uma configuração num :class:`AblationResult`."""
     return AblationResult(
         configuration=name,
         groups=groups,
-        n_features=len(train.feature_names),
+        n_features=len(list_feature_columns(train_features, groups)),
         score_mean=float(np.mean(scores)),
         score_std=float(np.std(scores)),
         delta=0.0,
     )
-
-
-def _run_leave_one_out(
-    available: list[str],
-    evaluate: Callable[[list[str], str], AblationResult],
-    full: AblationResult,
-    progress: Progress,
-    task: TaskID,
-) -> dict[str, Any]:
-    """Executa a etapa leave-one-out: remove um grupo por vez e mede a queda."""
-    leave_one_out: dict[str, Any] = {}
-    for group in available:
-        remaining = [name for name in available if name != group]
-        result = evaluate(remaining, f"sem_{group}")
-        leave_one_out[group] = result.__dict__ | {
-            "delta": result.score_mean - full.score_mean,
-        }
-        progress.advance(task)
-    return leave_one_out
-
-
-def _run_only_one(
-    available: list[str],
-    evaluate: Callable[[list[str], str], AblationResult],
-    full: AblationResult,
-    progress: Progress,
-    task: TaskID,
-) -> dict[str, Any]:
-    """Executa a etapa only-one: avalia cada grupo isoladamente."""
-    only_one: dict[str, Any] = {}
-    for group in available:
-        result = evaluate([group], f"apenas_{group}")
-        only_one[group] = result.__dict__ | {
-            "delta": result.score_mean - full.score_mean,
-        }
-        progress.advance(task)
-    return only_one
 
 
 def _rank_group_contributions(
@@ -233,8 +214,17 @@ def run_ablation(
     config: Config,
     ablation_config: AblationSection,
     label_to_index: dict[str, int],
+    *,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
     """Executa o Ablation Study completo.
+
+    Cada refit (uma configuração de grupos × uma repetição) é independente
+    das demais — leave-one-out, only-one e o baseline não dependem uns dos
+    outros para treinar, só para o cálculo final do delta — então todos são
+    disparados de uma vez como jobs paralelos, em vez de configuração por
+    configuração com repetições em série (para o modelo híbrido, isso é da
+    ordem de ``(1 + 2 × n_grupos) × n_repeats`` refits independentes).
 
     Parameters
     ----------
@@ -246,6 +236,9 @@ def run_ablation(
         Seção ``ablation`` de ``configs/evaluation.yaml``.
     label_to_index : dict of str to int
         Mapeamento de rótulo para índice inteiro.
+    max_workers : int, optional
+        Número de refits treinados em paralelo (ver
+        :func:`utils.parallel.run_thread_pool`), by default 1 (sequencial).
 
     Returns
     -------
@@ -269,12 +262,14 @@ def run_ablation(
     spec = config.models.all_models()[ablation_config.base_model]
     metric = config.evaluation.metrics.primary
     available = _resolve_available_groups(train_features, ablation_config)
+    configurations = _resolve_configurations(available, ablation_config)
 
-    def evaluate(groups: list[str], name: str) -> AblationResult:
-        """Treina e avalia o modelo base restrito a um conjunto de grupos."""
-        return _evaluate_group_configuration(
+    jobs = {
+        f"{name}::{repeat}": partial(
+            _single_ablation_fit,
             groups,
             name,
+            repeat,
             train_features,
             test_features,
             label_to_index,
@@ -283,21 +278,50 @@ def run_ablation(
             ablation_config,
             metric,
         )
+        for name, groups in configurations.items()
+        for repeat in range(ablation_config.n_repeats)
+    }
+    raw_scores = run_thread_pool(
+        jobs,
+        description="Ablation Study",
+        max_workers=max_workers,
+        catch=(ValueError, RuntimeError, MemoryError),
+    )
 
-    total_steps = 1 + len(available) + (len(available) if ablation_config.include_only_one else 0)
-    results: dict[str, Any] = {}
+    scores_by_configuration: dict[str, list[float]] = defaultdict(list)
+    for key, score in raw_scores.items():
+        name = key.rsplit("::", 1)[0]
+        scores_by_configuration[name].append(score)
 
-    with build_progress() as progress:
-        task = progress.add_task("Ablation Study", total=total_steps)
+    ablation_results: dict[str, AblationResult] = {}
+    for name, groups in configurations.items():
+        scores = scores_by_configuration.get(name)
+        if not scores:
+            logger.warning("Nenhuma repetição bem-sucedida para a configuração '%s'.", name)
+            continue
+        ablation_results[name] = _build_ablation_result(name, groups, scores, train_features)
 
-        full = evaluate(available, "completo")
-        results["baseline"] = full.__dict__
-        progress.advance(task)
+    if "completo" not in ablation_results:
+        logger.error("Configuração completa ('completo') do Ablation Study falhou: abortando.")
+        return {}
 
-        results["leave_one_out"] = _run_leave_one_out(available, evaluate, full, progress, task)
+    full = ablation_results["completo"]
+    results: dict[str, Any] = {"baseline": full.__dict__}
 
-        if ablation_config.include_only_one:
-            results["only_one"] = _run_only_one(available, evaluate, full, progress, task)
+    results["leave_one_out"] = {
+        group: ablation_results[f"sem_{group}"].__dict__
+        | {"delta": ablation_results[f"sem_{group}"].score_mean - full.score_mean}
+        for group in available
+        if f"sem_{group}" in ablation_results
+    }
+
+    if ablation_config.include_only_one:
+        results["only_one"] = {
+            group: ablation_results[f"apenas_{group}"].__dict__
+            | {"delta": ablation_results[f"apenas_{group}"].score_mean - full.score_mean}
+            for group in available
+            if f"apenas_{group}" in ablation_results
+        }
 
     results["ranking"] = _rank_group_contributions(full, results["leave_one_out"])
     results["metric"] = metric

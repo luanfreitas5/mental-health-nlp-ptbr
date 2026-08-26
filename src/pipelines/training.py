@@ -23,6 +23,7 @@ from training.trainer import (
     train_all,
 )
 from utils.files import list_files, write_json
+from utils.parallel import resolve_worker_count
 
 logger = get_logger(__name__)
 
@@ -90,7 +91,10 @@ class TrainingStage(PipelineStage):
             if name in config.models.all_models()
         }
         development_dataset = build_dataset(development, texts=texts, sequences=sequences)
-        cv_results = cross_validate_all(specs, development_dataset, splits, config)
+        max_workers = resolve_worker_count(context.option("workers"))
+        cv_results = cross_validate_all(
+            specs, development_dataset, splits, config, max_workers=max_workers
+        )
 
         write_json(
             paths.reports.metrics / "cross_validation.json",

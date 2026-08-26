@@ -168,8 +168,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "Número de processos paralelos no laço por usuário das etapas CPU-bound "
-            "(preprocess, features). Padrão: todos os núcleos detectados."
+            "Grau de paralelismo: número de processos no laço por usuário das etapas "
+            "CPU-bound (preprocess, features) e número de threads na validação cruzada, "
+            "treinamento, avaliação, Ablation Study e geração de figuras (train, evaluate, "
+            "report). Padrão: todos os núcleos detectados."
         ),
     )
     execution.add_argument(

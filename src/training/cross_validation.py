@@ -9,6 +9,7 @@ perderiam validade — eles pressupõem exatamente os mesmos blocos.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -21,7 +22,7 @@ from constants.labels import Split
 from evaluation.metrics import compute_metrics
 from models.base import UserDataset
 from models.factory import create_model
-from utils.progress import build_progress
+from utils.parallel import run_thread_pool
 
 logger = get_logger(__name__)
 
@@ -167,6 +168,9 @@ def cross_validate_model(
     dataset: UserDataset,
     splits: pl.DataFrame,
     config: Config,
+    *,
+    max_workers: int = 1,
+    show_progress: bool = True,
 ) -> dict[str, Any]:
     """Executa a validação cruzada de um modelo.
 
@@ -182,6 +186,13 @@ def cross_validate_model(
         Tabela de partições com os folds.
     config : Config
         Configuração completa do projeto.
+    max_workers : int, optional
+        Número de folds treinados em paralelo (ver
+        :func:`utils.parallel.run_thread_pool`), by default 1 (sequencial).
+    show_progress : bool, optional
+        Exibe a barra de progresso dos folds, by default True. Desative ao
+        chamar a partir de :func:`cross_validate_all` (que já mostra uma
+        barra por modelo) para não abrir duas barras ``rich`` ao mesmo tempo.
 
     Returns
     -------
@@ -196,18 +207,28 @@ def cross_validate_model(
     primary = config.evaluation.metrics.primary
     n_splits = config.general.cross_validation.n_splits
 
+    jobs = {
+        str(fold): partial(_evaluate_fold, name, spec, dataset, splits, fold, config)
+        for fold in range(n_splits)
+    }
+    raw_results = run_thread_pool(
+        jobs,
+        description=f"Validação cruzada — {name}",
+        max_workers=max(1, min(max_workers, n_splits)),
+        catch=(ValueError, RuntimeError, MemoryError),
+        show_progress=show_progress,
+    )
+
+    # A ordem por índice de fold (não a de conclusão) é o que garante que a
+    # posição `i` de `scores` corresponda ao mesmo fold em todos os modelos —
+    # pré-requisito dos testes pareados (Wilcoxon, Friedman) em `statistics.py`.
     scores: list[float] = []
     per_fold: list[dict[str, float]] = []
-
-    with build_progress() as progress:
-        task = progress.add_task(f"Validação cruzada — {name}", total=n_splits)
-
-        for fold in range(n_splits):
-            metrics = _evaluate_fold(name, spec, dataset, splits, fold, config)
-            if metrics is not None:
-                scores.append(metrics[primary])
-                per_fold.append(metrics)
-            progress.advance(task)
+    for fold in range(n_splits):
+        metrics = raw_results.get(str(fold))
+        if metrics is not None:
+            scores.append(metrics[primary])
+            per_fold.append(metrics)
 
     if not scores:
         logger.error("Nenhum fold válido para '%s'.", name)
@@ -242,8 +263,16 @@ def cross_validate_all(
     dataset: UserDataset,
     splits: pl.DataFrame,
     config: Config,
+    *,
+    max_workers: int = 1,
 ) -> dict[str, dict[str, Any]]:
     """Executa a validação cruzada de todos os modelos selecionados.
+
+    Cada modelo é independente dos demais, então roda em sua própria thread;
+    o orçamento de paralelismo (``max_workers``) é dividido entre o número de
+    modelos simultâneos e o número de folds simultâneos de cada um, para que
+    o total de folds em treino ao mesmo tempo fique perto do solicitado, em
+    vez de multiplicar (modelos × folds) e sobrecarregar a GPU.
 
     Parameters
     ----------
@@ -255,27 +284,51 @@ def cross_validate_all(
         Tabela de partições.
     config : Config
         Configuração completa do projeto.
+    max_workers : int, optional
+        Orçamento total de paralelismo (ver ``--workers``), by default 1
+        (sequencial, comportamento anterior).
 
     Returns
     -------
     dict
-        Resultado da validação cruzada por modelo.
+        Resultado da validação cruzada por modelo. Um modelo que falhar
+        (``ValueError``, ``RuntimeError`` ou ``MemoryError``) fica ausente —
+        não pode interromper a comparação inteira, pois o custo de
+        reexecutar tudo é alto demais.
 
     Examples
     --------
     >>> cross_validate_all(specs, conjunto, particoes, config)  # doctest: +SKIP
     """
-    results: dict[str, dict[str, Any]] = {}
+    if not specs:
+        return {}
 
-    for name, spec in specs.items():
-        try:
-            results[name] = cross_validate_model(name, spec, dataset, splits, config)
-        except (ValueError, RuntimeError, MemoryError):
-            # Um modelo que falha não pode interromper a comparação inteira:
-            # o custo de reexecutar tudo é alto demais.
-            logger.exception("Validação cruzada de '%s' falhou.", name)
+    outer_workers = max(1, min(max_workers, len(specs)))
+    inner_workers = max(1, max_workers // outer_workers)
 
-    return results
+    jobs = {
+        name: partial(
+            cross_validate_model,
+            name,
+            spec,
+            dataset,
+            splits,
+            config,
+            max_workers=inner_workers,
+            # A barra de progresso por fold fica desligada aqui: ela roda numa
+            # thread de worker enquanto a barra "entre modelos" já está ativa,
+            # e as duas compartilham o mesmo console `rich` (só uma barra viva
+            # por vez é permitida).
+            show_progress=False,
+        )
+        for name, spec in specs.items()
+    }
+    return run_thread_pool(
+        jobs,
+        description="Validação cruzada entre modelos",
+        max_workers=outer_workers,
+        catch=(ValueError, RuntimeError, MemoryError),
+    )
 
 
 def _build_complete_scores(results: dict[str, dict[str, Any]]) -> dict[str, np.ndarray]:

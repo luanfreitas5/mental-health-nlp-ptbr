@@ -7,6 +7,7 @@ num domínio em que um erro tem consequência clínica.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from pipelines.base import PipelineStage, StageContext
 from reports_templates.datasheet import build_datasheet
 from reports_templates.model_card import build_model_card
 from utils.files import list_files, read_json, write_text
+from utils.parallel import resolve_worker_count, run_thread_pool
 from visualization.distributions import (
     plot_class_distribution,
     plot_ngrams,
@@ -279,10 +281,25 @@ class ReportingStage(PipelineStage):
         apply_theme(context.config.evaluation.reporting.figure_dpi)
         paths = context.paths
 
+        # As três famílias de figuras leem artefatos diferentes (matriz de
+        # atributos, JSON de métricas, CSVs de interpretabilidade) e não
+        # compartilham estado entre si, por isso rodam em paralelo.
+        jobs = {
+            "exploratorias": partial(self._exploratory_figures, context),
+            "avaliacao": partial(self._evaluation_figures, context),
+            "interpretabilidade": partial(self._interpretability_figures, context),
+        }
+        max_workers = min(resolve_worker_count(context.option("workers")), len(jobs))
+        grouped = run_thread_pool(
+            jobs,
+            description="Geração de figuras",
+            max_workers=max_workers,
+            catch=(Exception,),
+        )
+
         figures: dict[str, str | None] = {}
-        figures.update(self._exploratory_figures(context))
-        figures.update(self._evaluation_figures(context))
-        figures.update(self._interpretability_figures(context))
+        for group_figures in grouped.values():
+            figures.update(group_figures)
 
         generated = {name: path for name, path in figures.items() if path}
         logger.info("Figuras geradas: %d de %d tentativas.", len(generated), len(figures))

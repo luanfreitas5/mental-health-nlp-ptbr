@@ -169,8 +169,12 @@ longitudinal.
 
 ### Objetivo
 
-Produzir dois níveis de rótulo: (1) sentimento e emoções por tweet, via
-encoders Transformer; (2) classe do usuário (`controle` / `depressao` /
+Produzir dois níveis de rótulo:
+
+1. sentimento e emoções por tweet, via
+encoders Transformer;
+
+2. classe do usuário (`controle` / `depressao` /
 `ideacao_suicida`) por **supervisão fraca**, combinando votos de três fontes
 ponderadas, com consenso mínimo, amostragem para revisão manual e cálculo de
 concordância (kappa de Cohen).

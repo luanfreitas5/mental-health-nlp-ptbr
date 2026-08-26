@@ -8,6 +8,7 @@ e a estimativa de generalização deixaria de valer.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from models.persistence import load_model
 from pipelines.base import PipelineStage, StageContext
 from training.trainer import build_dataset, load_user_sequences, load_user_texts, split_features
 from utils.files import list_files, read_json, write_json
+from utils.parallel import resolve_worker_count, run_thread_pool
 
 logger = get_logger(__name__)
 
@@ -83,19 +85,24 @@ class EvaluationStage(PipelineStage):
         )
 
         evaluator = Evaluator(config)
+        max_workers = resolve_worker_count(context.option("workers"))
 
         model_files = sorted(paths.models.artifacts.glob("*.joblib"))
         if not model_files:
             logger.error("Nenhum modelo treinado em %s.", paths.models.artifacts)
             return {"skipped": True, "reason": "nenhum modelo treinado"}
 
-        results = self._evaluate_models(model_files, test, config, evaluator, texts, sequences)
+        results = self._evaluate_models(
+            model_files, test, config, evaluator, texts, sequences, max_workers
+        )
         if not results:
             return {"skipped": True, "reason": "nenhum modelo pôde ser avaliado"}
 
         comparison = evaluator.compare(results)
         statistics = self._run_statistics(results, config, paths)
-        ablation_summary = self._run_ablation_study(train, test, config, context, paths)
+        ablation_summary = self._run_ablation_study(
+            train, test, config, context, paths, max_workers
+        )
 
         # --- Interpretabilidade --------------------------------------------
         interpretability = self._run_interpretability(results, test, texts, sequences, context)
@@ -140,6 +147,26 @@ class EvaluationStage(PipelineStage):
         for path in written.values():
             context.tracker.log_artifact(Path(path))
 
+    def _evaluate_one_model(
+        self,
+        model_file: Path,
+        test: pl.DataFrame,
+        config: Any,
+        evaluator: Evaluator,
+        texts: dict[str, list[str]] | None,
+        sequences: dict[str, Any] | None,
+    ) -> tuple[str, Any]:
+        """Carrega e avalia um único modelo, retornando ``(nome, resultado)``."""
+        model = load_model(model_file)
+        spec = config.models.all_models().get(model.name)
+        dataset = build_dataset(
+            test,
+            feature_groups=spec.feature_groups if spec else None,
+            texts=texts,
+            sequences=sequences,
+        )
+        return model.name, evaluator.evaluate(model, dataset, profile=test)
+
     def _evaluate_models(
         self,
         model_files: list[Path],
@@ -148,24 +175,27 @@ class EvaluationStage(PipelineStage):
         evaluator: Evaluator,
         texts: dict[str, list[str]] | None,
         sequences: dict[str, Any] | None,
+        max_workers: int = 1,
     ) -> dict[str, Any]:
-        """Avalia cada modelo treinado no conjunto de teste, isolando falhas por modelo."""
-        results: dict[str, Any] = {}
-        for model_file in model_files:
-            try:
-                model = load_model(model_file)
-                spec = config.models.all_models().get(model.name)
-                dataset = build_dataset(
-                    test,
-                    feature_groups=spec.feature_groups if spec else None,
-                    texts=texts,
-                    sequences=sequences,
-                )
-                results[model.name] = evaluator.evaluate(model, dataset, profile=test)
-            except (ValueError, RuntimeError, OSError, KeyError):
-                logger.exception("Avaliação de '%s' falhou.", model_file.stem)
+        """Avalia cada modelo treinado no conjunto de teste, isolando falhas por modelo.
 
-        return results
+        Cada modelo é independente dos demais (carrega o próprio artefato e
+        recorta o próprio subconjunto de atributos), por isso a avaliação
+        roda em threads paralelas.
+        """
+        jobs = {
+            model_file.stem: partial(
+                self._evaluate_one_model, model_file, test, config, evaluator, texts, sequences
+            )
+            for model_file in model_files
+        }
+        pairs = run_thread_pool(
+            jobs,
+            description="Avaliação dos modelos",
+            max_workers=max_workers,
+            catch=(ValueError, RuntimeError, OSError, KeyError),
+        )
+        return dict(pairs.values())
 
     def _run_statistics(self, results: dict[str, Any], config: Any, paths: Any) -> dict[str, Any]:
         """Roda Wilcoxon/Friedman (se houver scores por fold) e o McNemar par a par."""
@@ -202,13 +232,19 @@ class EvaluationStage(PipelineStage):
         config: Any,
         context: StageContext,
         paths: Any,
+        max_workers: int = 1,
     ) -> pl.DataFrame:
         """Roda o Ablation Study, se habilitado, sem interromper a avaliação em caso de falha."""
         ablation_summary = pl.DataFrame()
         if config.evaluation.ablation.enabled and not context.option("skip_ablation", False):
             try:
                 ablation = run_ablation(
-                    train, test, config, config.evaluation.ablation, LABEL_TO_INDEX
+                    train,
+                    test,
+                    config,
+                    config.evaluation.ablation,
+                    LABEL_TO_INDEX,
+                    max_workers=max_workers,
                 )
                 if ablation:
                     ablation_summary = summarize_ablation(ablation)

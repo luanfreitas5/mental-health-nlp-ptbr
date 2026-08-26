@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import TypeVar
 
 from config.logging import get_logger
@@ -125,5 +125,94 @@ def run_user_pool(
                 if result is not None:
                     results.append(result)
                 progress.advance(task)
+
+    return results
+
+
+def run_thread_pool(
+    jobs: dict[str, Callable[[], R]],
+    *,
+    description: str,
+    max_workers: int,
+    catch: tuple[type[Exception], ...] = (Exception,),
+    show_progress: bool = True,
+) -> dict[str, R]:
+    """Executa jobs independentes em threads, isolando falhas por job.
+
+    Complementa :func:`run_user_pool` para o caso de treino/validação/avaliação
+    de modelos: scikit-learn, XGBoost e PyTorch liberam o GIL durante a parte
+    pesada (código nativo em C/C++/CUDA), então threads bastam para sobrepor
+    o trabalho — ao contrário do laço por usuário (Python puro, preso ao
+    GIL), aqui processos só trariam a sobrecarga de serializar datasets
+    grandes (atributos, textos, sequências de embeddings) entre processos e
+    de abrir um contexto CUDA por processo na mesma GPU.
+
+    Diferente de :func:`run_user_pool`, uma falha num job não interrompe os
+    demais: o job correspondente fica ausente do dicionário retornado, e a
+    exceção é registrada em log — o mesmo padrão de isolamento já usado nos
+    laços sequenciais de treino, validação cruzada e avaliação que este
+    utilitário substitui.
+
+    Parameters
+    ----------
+    jobs : dict of str to Callable[[], R]
+        Um job por chave (ex.: nome do modelo, índice do fold). Cada job é um
+        "thunk" (``functools.partial`` ou closure já com os dados vinculados).
+    description : str
+        Texto exibido na barra de progresso.
+    max_workers : int
+        Número de threads paralelas (ver :func:`resolve_worker_count`).
+    catch : tuple of type[Exception], optional
+        Exceções tratadas como falha isolada de um job (logadas e omitidas do
+        retorno); qualquer exceção fora dessa tupla propaga normalmente.
+    show_progress : bool, optional
+        Exibe uma barra de progresso própria, by default True. Use ``False``
+        ao chamar esta função de dentro de um job que já roda sob outra
+        barra de progresso (ex.: paralelismo aninhado) — a barra ``rich``
+        compartilha um único console (:data:`config.logging.CONSOLE`) e duas
+        barras ativas ao mesmo tempo levantam ``rich.errors.LiveError``.
+
+    Returns
+    -------
+    dict of str to R
+        Um resultado por job concluído com sucesso, indexado pela mesma
+        chave de ``jobs``. Jobs que falharam (dentro de ``catch``) ficam
+        ausentes.
+
+    Examples
+    --------
+    >>> run_thread_pool({}, description="x", max_workers=1)
+    {}
+    """
+    if not jobs:
+        return {}
+
+    logger.info(
+        "%s: distribuindo %d tarefa(s) entre %d thread(s).",
+        description,
+        len(jobs),
+        max_workers,
+    )
+
+    results: dict[str, R] = {}
+
+    def _dispatch(advance: Callable[[], None]) -> None:
+        """Submete todos os jobs e coleta os resultados, isolando falhas."""
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+            futures = {executor.submit(job): key for key, job in jobs.items()}
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    results[key] = future.result()
+                except catch:
+                    logger.exception("Falha ao executar '%s' (%s).", key, description)
+                advance()
+
+    if show_progress:
+        with build_progress() as progress:
+            task = progress.add_task(description, total=len(jobs))
+            _dispatch(lambda: progress.advance(task))
+    else:
+        _dispatch(lambda: None)
 
     return results
