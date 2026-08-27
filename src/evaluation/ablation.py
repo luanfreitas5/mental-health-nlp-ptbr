@@ -208,6 +208,76 @@ def _rank_group_contributions(
     return dict(sorted(contributions.items(), key=operator.itemgetter(1), reverse=True))
 
 
+def _build_ablation_jobs(
+    configurations: dict[str, list[str]],
+    train_features: pl.DataFrame,
+    test_features: pl.DataFrame,
+    label_to_index: dict[str, int],
+    spec: Any,
+    config: Config,
+    ablation_config: AblationSection,
+    metric: str,
+) -> dict[str, partial[float]]:
+    """Monta um job (refit independente) por combinação configuração × repetição."""
+    return {
+        f"{name}::{repeat}": partial(
+            _single_ablation_fit,
+            groups,
+            name,
+            repeat,
+            train_features,
+            test_features,
+            label_to_index,
+            spec,
+            config,
+            ablation_config,
+            metric,
+        )
+        for name, groups in configurations.items()
+        for repeat in range(ablation_config.n_repeats)
+    }
+
+
+def _group_scores_by_configuration(raw_scores: dict[str, float]) -> dict[str, list[float]]:
+    """Agrupa os scores das repetições (``"<config>::<repeat>"``) por configuração."""
+    scores_by_configuration: dict[str, list[float]] = defaultdict(list)
+    for key, score in raw_scores.items():
+        name = key.rsplit("::", 1)[0]
+        scores_by_configuration[name].append(score)
+    return scores_by_configuration
+
+
+def _collect_ablation_results(
+    configurations: dict[str, list[str]],
+    scores_by_configuration: dict[str, list[float]],
+    train_features: pl.DataFrame,
+) -> dict[str, AblationResult]:
+    """Resume cada configuração num :class:`AblationResult`, pulando falhas totais."""
+    ablation_results: dict[str, AblationResult] = {}
+    for name, groups in configurations.items():
+        scores = scores_by_configuration.get(name)
+        if not scores:
+            logger.warning("Nenhuma repetição bem-sucedida para a configuração '%s'.", name)
+            continue
+        ablation_results[name] = _build_ablation_result(name, groups, scores, train_features)
+    return ablation_results
+
+
+def _summarize_group_variant(
+    prefix: str,
+    available: list[str],
+    ablation_results: dict[str, AblationResult],
+    full: AblationResult,
+) -> dict[str, Any]:
+    """Resume uma variante do Ablation Study (``"sem_"`` ou ``"apenas_"``) por grupo."""
+    return {
+        group: ablation_results[f"{prefix}{group}"].__dict__
+        | {"delta": ablation_results[f"{prefix}{group}"].score_mean - full.score_mean}
+        for group in available
+        if f"{prefix}{group}" in ablation_results
+    }
+
+
 def run_ablation(
     train_features: pl.DataFrame,
     test_features: pl.DataFrame,
@@ -264,42 +334,26 @@ def run_ablation(
     available = _resolve_available_groups(train_features, ablation_config)
     configurations = _resolve_configurations(available, ablation_config)
 
-    jobs = {
-        f"{name}::{repeat}": partial(
-            _single_ablation_fit,
-            groups,
-            name,
-            repeat,
-            train_features,
-            test_features,
-            label_to_index,
-            spec,
-            config,
-            ablation_config,
-            metric,
-        )
-        for name, groups in configurations.items()
-        for repeat in range(ablation_config.n_repeats)
-    }
+    jobs = _build_ablation_jobs(
+        configurations,
+        train_features,
+        test_features,
+        label_to_index,
+        spec,
+        config,
+        ablation_config,
+        metric,
+    )
     raw_scores = run_thread_pool(
         jobs,
         description="Ablation Study",
         max_workers=max_workers,
         catch=(ValueError, RuntimeError, MemoryError),
     )
-
-    scores_by_configuration: dict[str, list[float]] = defaultdict(list)
-    for key, score in raw_scores.items():
-        name = key.rsplit("::", 1)[0]
-        scores_by_configuration[name].append(score)
-
-    ablation_results: dict[str, AblationResult] = {}
-    for name, groups in configurations.items():
-        scores = scores_by_configuration.get(name)
-        if not scores:
-            logger.warning("Nenhuma repetição bem-sucedida para a configuração '%s'.", name)
-            continue
-        ablation_results[name] = _build_ablation_result(name, groups, scores, train_features)
+    scores_by_configuration = _group_scores_by_configuration(raw_scores)
+    ablation_results = _collect_ablation_results(
+        configurations, scores_by_configuration, train_features
+    )
 
     if "completo" not in ablation_results:
         logger.error("Configuração completa ('completo') do Ablation Study falhou: abortando.")
@@ -307,21 +361,9 @@ def run_ablation(
 
     full = ablation_results["completo"]
     results: dict[str, Any] = {"baseline": full.__dict__}
-
-    results["leave_one_out"] = {
-        group: ablation_results[f"sem_{group}"].__dict__
-        | {"delta": ablation_results[f"sem_{group}"].score_mean - full.score_mean}
-        for group in available
-        if f"sem_{group}" in ablation_results
-    }
-
+    results["leave_one_out"] = _summarize_group_variant("sem_", available, ablation_results, full)
     if ablation_config.include_only_one:
-        results["only_one"] = {
-            group: ablation_results[f"apenas_{group}"].__dict__
-            | {"delta": ablation_results[f"apenas_{group}"].score_mean - full.score_mean}
-            for group in available
-            if f"apenas_{group}" in ablation_results
-        }
+        results["only_one"] = _summarize_group_variant("apenas_", available, ablation_results, full)
 
     results["ranking"] = _rank_group_contributions(full, results["leave_one_out"])
     results["metric"] = metric
