@@ -551,7 +551,7 @@ pydantic==2.13.4
     #   pandera
     #   pydantic-settings
     #   scalene
-pydantic-core==2.46.4
+pydantic-core==2.48.0
     # via pydantic
 pydantic-settings==2.15.0
     # via mental-health-nlp-ptbr
