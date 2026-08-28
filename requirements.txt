@@ -183,7 +183,7 @@ greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or 
     # via sqlalchemy
 griffelib==2.2.0
     # via mkdocstrings-python
-gunicorn==26.1.0 ; sys_platform != 'win32'
+gunicorn==26.2.0 ; sys_platform != 'win32'
     # via mlflow
 h11==0.16.0
     # via uvicorn
